@@ -344,7 +344,7 @@ key_warmup, key_sample = jax.random.split(key)
 
 print('Step size:',parameters["step_size"])
 print(f"Step size: {parameters['step_size']}", file=log_file)
-# parameters["step_size"] = 0.005
+parameters["step_size"] = 0.005
 print('Set step size to:',parameters["step_size"])
 print(f"Set step size to: {parameters['step_size']}", file=log_file)
 print(parameters.keys(), file=log_file)
