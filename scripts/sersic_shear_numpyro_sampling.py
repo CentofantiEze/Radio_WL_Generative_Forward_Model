@@ -64,7 +64,7 @@ def draw_exp_profile(hlr, flux, e1, e2, g1, g2, uv_pos, Npx, pixel_scale):
     return complex_2_stack(vis)
 
 def draw_sersic_profile(hlr, flux, e1, e2, g1, g2, uv_pos, Npx, pixel_scale):
-    n = np.random.rand() * 0. + 1. # Exponential profile, n=1
+    n = np.random.rand() * 0. + 4. # Exponential profile, n=1
     gal = gs.Sersic(n=n, half_light_radius=hlr, flux=flux)
     
     # intrinsic ellipticity
@@ -84,16 +84,18 @@ def draw_sersic_profile(hlr, flux, e1, e2, g1, g2, uv_pos, Npx, pixel_scale):
 
     return complex_2_stack(vis)
 
-ell_prior_scale = 1.
-ell_scale = 0.3
-g_prior_scale = 1.
-g_scale = 0.3
-hlr_offset = 2.5
-hlr_scale = 1/2.5
-hlr_min = 0.1
-flux_offset = 1.
-flux_scale = 1/30.
-flux_min = 0.1
+ell_sigma = .5
+ell_scale = .3
+g_sigma = 1.0
+g_scale = .3
+hlr_sigma = 2.0
+hlr_offset = 1.
+hlr_scale = 1/1.4
+hlr_min = .2
+flux_sigma = 2.0
+flux_offset = 0.
+flux_scale = 1/15.
+flux_min = .05
 #@partial(jax.jit, static_argnums=(0,1,2,3,4))
 def model_fn(Ngal=10, Npx=128, pixel_scale=0.15, uv_pos=None, noise_uv=1e-2, obs=None, params_dir=params_dir, data_gen=False):
 
@@ -104,15 +106,15 @@ def model_fn(Ngal=10, Npx=128, pixel_scale=0.15, uv_pos=None, noise_uv=1e-2, obs
 
     u = jnp.ones((Ngal,)) # sampling galaxies all at once
 
-    hlr_fit = params['beta_fit_hlr']
+    # hlr_fit = params['beta_fit_hlr']
     # hlr = numpyro.sample("hlr", dist.Beta(hlr_fit['a'], hlr_fit['b']), sample_shape=(Ngal,)) * hlr_fit['scale'] + hlr_fit['loc']
     # hlr = jnp.abs((numpyro.sample("hlr", dist.Normal(0.*u, 1.*u)) + 4.) * 1.) + 1e-3
-    hlr = jnp.abs((numpyro.sample("hlr", dist.Normal(0.*u, 1.*u)) + hlr_offset)) * hlr_scale + hlr_min
+    hlr = jax.nn.softplus((numpyro.sample("hlr", dist.Normal(0.*u, hlr_sigma*u))/hlr_sigma + hlr_offset)) * hlr_scale + hlr_min
     
-    flux_fit = params['beta_fit_flux']
+    # flux_fit = params['beta_fit_flux']
     # flux = numpyro.sample("flux", dist.Beta(flux_fit['a'], flux_fit['b']), sample_shape=(Ngal,)) * flux_fit['scale'] + flux_fit['loc']
     # flux = jnp.abs((numpyro.sample("flux", dist.Normal(0.*u, 1.*u)) + 10.) * 2.) + 1e-3
-    flux = jnp.abs((numpyro.sample("flux", dist.Normal(0.*u, 1.*u)) + flux_offset)) * flux_scale + flux_min
+    flux = jax.nn.softplus((numpyro.sample("flux", dist.Normal(0.*u, flux_sigma*u))/flux_sigma + flux_offset)) * flux_scale + flux_min
     
     # r_ell_fit = params['beta_fit_r_ell']
     # r_ell = numpyro.sample("r_ell", dist.Beta(r_ell_fit['a'], r_ell_fit['b']), sample_shape=(Ngal,)) * r_ell_fit['scale'] + r_ell_fit['loc']
@@ -120,13 +122,13 @@ def model_fn(Ngal=10, Npx=128, pixel_scale=0.15, uv_pos=None, noise_uv=1e-2, obs
 
     # e1 = r_ell * jnp.cos(angle_ell)
     # e2 = r_ell * jnp.sin(angle_ell)
-    e1 = numpyro.sample("e1", dist.Normal(0.*u, ell_prior_scale*u))/ell_prior_scale * ell_scale
-    e2 = numpyro.sample("e2", dist.Normal(0.*u, ell_prior_scale*u))/ell_prior_scale * ell_scale
+    e1 = numpyro.sample("e1", dist.Normal(0.*u, ell_sigma*u))/ell_sigma * ell_scale
+    e2 = numpyro.sample("e2", dist.Normal(0.*u, ell_sigma*u))/ell_sigma * ell_scale
 
 
     # assuming constant shear across galaxies
-    g1 = numpyro.sample("g1", dist.Normal(jnp.zeros((1,)), g_prior_scale*jnp.ones((1,))))*g_scale/g_prior_scale
-    g2 = numpyro.sample("g2", dist.Normal(jnp.zeros((1,)), g_prior_scale*jnp.ones((1,))))*g_scale/g_prior_scale
+    g1 = numpyro.sample("g1", dist.Normal(jnp.zeros((1,)), g_sigma*jnp.ones((1,))))*g_scale/g_sigma
+    g2 = numpyro.sample("g2", dist.Normal(jnp.zeros((1,)), g_sigma*jnp.ones((1,))))*g_scale/g_sigma
 
     # clipping undefined e and g values
     e = jnp.stack([e1, e2], 0)
@@ -178,8 +180,8 @@ print(f"fov_size: {fov_size}", file=log_file)
 print(f"noise_uv: {noise_uv}", file=log_file)
 print(f"g1_true: {g1_true}", file=log_file)
 print(f"g2_true: {g2_true}", file=log_file)
-print(f"Ellipticity prior scale: {ell_prior_scale}", file=log_file)
-print(f"Shear prior scale: {g_prior_scale}", file=log_file)
+print(f"Ellipticity prior scale: {ell_sigma}", file=log_file)
+print(f"Shear prior scale: {g_sigma}", file=log_file)
 
 # Radio PSF
 import argosim
@@ -210,13 +212,16 @@ plt.title('Gaussian PSF')
 plt.colorbar()
 plt.savefig("../outputs/radio_psf.pdf")
 
+rand_seed = np.random.randint(1, 1e6)
+print(f"Random seed: {rand_seed}")
+print(f"Random seed: {rand_seed}", file=log_file)
 # Generate observations
-key = jax.random.PRNGKey(42)
+key = jax.random.PRNGKey(rand_seed)
 model_data_gen = partial(model_fn, Ngal=Ngal, Npx=Npx, pixel_scale=pixel_scale,  uv_pos=uv_pos, noise_uv=noise_uv, data_gen=True) 
 seeded_model_data_gen = seed(model_data_gen, key)
 
 # Conditioning model to generate observation with [g1, g2]
-conditionned_model = condition(seeded_model_data_gen, {"g1":g1_true*jnp.ones((1,))/(g_scale/g_prior_scale), "g2":g2_true*jnp.ones((1,))/(g_scale/g_prior_scale)})
+conditionned_model = condition(seeded_model_data_gen, {"g1":g1_true*jnp.ones((1,))/(g_scale/g_sigma), "g2":g2_true*jnp.ones((1,))/(g_scale/g_sigma)})
 data = conditionned_model()
 
 # Reset model for sampling
@@ -278,7 +283,7 @@ def log_prob_fn(params):
     return numpyro.infer.util.log_density(model, (), {"obs":data,}, params)[0]
 
 # MAP params
-lr_map = 2e-3
+lr_map = 3e-3
 n_steps_map = 5_000
 print(f"MAP learning rate: {lr_map}", file=log_file)
 print(f"MAP number of steps: {n_steps_map}", file=log_file)
@@ -306,14 +311,14 @@ def find_map(init_params):
 
 init_val = jax.vmap(find_map)(init_val_)
 
-print(init_val["g1"]*(g_scale/g_prior_scale), init_val["g2"]*(g_scale/g_prior_scale))
-print(f"Initial guess: g1={init_val['g1']*(g_scale/g_prior_scale)}, g2={init_val['g2']*(g_scale/g_prior_scale)}", file=log_file)
+print(init_val["g1"]*(g_scale/g_sigma), init_val["g2"]*(g_scale/g_sigma))
+print(f"Initial guess: g1={init_val['g1']*(g_scale/g_sigma)}, g2={init_val['g2']*(g_scale/g_sigma)}", file=log_file)
 np.save("../outputs/radio_map_val.npy", init_val, allow_pickle=True)
 
 # Plot the initial guess for the shear
 plt.figure()
-plt.scatter(init_val_["g1"]*(g_scale/g_prior_scale), init_val_["g2"]*(g_scale/g_prior_scale))
-plt.scatter(init_val["g1"]*(g_scale/g_prior_scale), init_val["g2"]*(g_scale/g_prior_scale))
+plt.scatter(init_val_["g1"]*(g_scale/g_sigma), init_val_["g2"]*(g_scale/g_sigma))
+plt.scatter(init_val["g1"]*(g_scale/g_sigma), init_val["g2"]*(g_scale/g_sigma))
 plt.scatter(g1_true, g2_true, color='red', label='True shear')
 plt.xlabel('g1')
 plt.ylabel('g2')
@@ -339,12 +344,12 @@ key_warmup, key_sample = jax.random.split(key)
 (last_states, parameters), _ = warmup.run(
             key_warmup,
             init_val,
-            num_steps=1000,
+            num_steps=500,
         )
 
 print('Step size:',parameters["step_size"])
 print(f"Step size: {parameters['step_size']}", file=log_file)
-# parameters["step_size"] = 0.005
+parameters["step_size"] = 0.005
 print('Set step size to:',parameters["step_size"])
 print(f"Set step size to: {parameters['step_size']}", file=log_file)
 print(parameters.keys(), file=log_file)
@@ -416,7 +421,6 @@ labels = ["hlr", "flux", "e1", "e2", "g1", "g2"]
 params_scales = np.load(params_dir, allow_pickle=True)[()]
 
 fig, axes = plt.subplots(len(labels), figsize=(10, 7), sharex=True)
-
 for i, label in enumerate(labels):
     print(i, label)
     ax = axes[i]
@@ -429,12 +433,46 @@ for i, label in enumerate(labels):
     ax.set_xlim(0, num_steps*num*2)
     ax.set_ylabel(label)
     ax.yaxis.set_label_coords(-0.1, 0.5)
-
 axes[-1].set_xlabel("step number")
 plt.savefig("../outputs/radio_chains.pdf")
 
+fig, axes = plt.subplots(len(labels), figsize=(10, 7), sharex=True)
+for i, label in enumerate(labels):
+    ax = axes[i]
+    for k in range(num_chains):
+        if label == "hlr":
+            # hlr -> jax.nn.softplus(hlr + hlr_offset) * hlr_scale + hlr_min
+            ax.plot(jax.nn.softplus(samples_["hlr"][k,:,0]/hlr_sigma+hlr_offset)*hlr_scale + hlr_min, "k", alpha=0.3)
+        if label == "flux":
+            # flux -> jax.nn.softplus(flux + flux_offset) * flux_scale + flux_min
+            ax.plot(jax.nn.softplus(samples_["flux"][k,:,0]/flux_sigma+flux_offset)*flux_scale + flux_min, "k", alpha=0.3)
+        if label in ["e1", "e2"]:
+            #  e1, e2 -> clip_by_l2_norm
+            e = jnp.stack([samples_["e1"][k,:,0]/ell_sigma * ell_scale, samples_["e2"][k,:,0]/ell_sigma * ell_scale], 0)
+            e = clip_by_l2_norm(e)
+            if label == "e1":
+                ax.plot(e[0], "k", alpha=0.3)
+            else:
+                ax.plot(e[1], "k", alpha=0.3)
+        if label in ["g1", "g2"]:
+            # g1, g2 -> clip_by_l2_norm
+            g = jnp.stack([samples_["g1"][k,:,0]/g_sigma * g_scale, samples_["g2"][k,:,0]/g_sigma * g_scale], 0)
+            g = clip_by_l2_norm(g)
+            if label == "g1":
+                ax.plot(g[0], "k", alpha=0.3)
+            else:
+                ax.plot(g[1], "k", alpha=0.3)
+        else:
+            pass
+
+    ax.set_xlim(0, num_steps*num*2)
+    ax.set_ylabel(label)
+    ax.yaxis.set_label_coords(-0.1, 0.5)
+axes[-1].set_xlabel("step number")
+plt.savefig("../outputs/radio_chains_scaled.pdf")
+
 two_truths = np.array([g1_true, g2_true])
-samples_g = np.concatenate([samples_["g1"], samples_["g2"]], -1).reshape((-1,2)) * (g_scale/g_prior_scale)
+samples_g = np.concatenate([samples_["g1"], samples_["g2"]], -1).reshape((-1,2)) * (g_scale/g_sigma)
 
 import corner
 
@@ -475,3 +513,5 @@ print(flatchain, file=log_file)
 
 # Save log file
 log_file.close()
+
+print("Done.")
