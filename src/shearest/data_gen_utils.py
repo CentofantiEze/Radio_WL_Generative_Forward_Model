@@ -7,8 +7,8 @@ from functools import partial
 import numpyro
 import numpyro.distributions as dist
 
-from func_utils import complex_2_stack
-from func_utils import to_unit_disk
+from .func_utils import complex_2_stack
+from .func_utils import to_unit_disk
 
 def draw_exp_profile(hlr, flux, e1, e2, g1, g2, uv_pos, Npx, pixel_scale):
     gal = galsim.Exponential(half_light_radius=hlr, flux=flux)

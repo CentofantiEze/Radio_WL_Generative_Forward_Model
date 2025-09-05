@@ -6,8 +6,8 @@ import numpyro.distributions as dist
 
 from functools import partial
 
-from data_gen_utils import draw_exp_profile
-from func_utils import to_unit_disk
+from .data_gen_utils import draw_exp_profile
+from .func_utils import to_unit_disk
 
 
 #@partial(jax.jit, static_argnums=(0,1,2,3,4))
