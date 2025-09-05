@@ -65,4 +65,5 @@ srun python sersic_shear_numpyro_sampling_argparse.py \
     --step_size 0.005\
     --num 20\
     --num_steps 10000\
-    --save_samples False
+    --save_samples False\
+    --seed 33
