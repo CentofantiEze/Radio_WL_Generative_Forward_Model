@@ -492,6 +492,8 @@ def main():
 
     # Save samples
     if args.save_samples:
+        print(args.save_samples)
+        print("Saving samples...")
         np.savez("../outputs/radio_samples.npz", **samples_)
 
     # Save log file

@@ -32,7 +32,7 @@ srun python sersic_shear_numpyro_sampling_argparse.py \
     --params_dir ../data/trecs_gal_params.npy\
     --g1_true -0.05\
     --g2_true 0.05\
-    --ell_sigma 0.5\
+    --ell_sigma 1.0\
     --ell_scale 0.3\
     --g_sigma 1.0\
     --g_scale 0.3\
@@ -66,4 +66,4 @@ srun python sersic_shear_numpyro_sampling_argparse.py \
     --num 20\
     --num_steps 10000\
     --save_samples False\
-    --seed 33
+    --seed None
