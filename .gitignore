@@ -209,6 +209,7 @@ __marimo__/
 # Files
 *.npy
 *.fits
+*.npz
 
 # Mac
 .DS_Store
