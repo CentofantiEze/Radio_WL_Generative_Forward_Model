@@ -422,10 +422,10 @@ def main():
         for k in range(args.num_chains):
             if label == "hlr":
                 # hlr -> jax.nn.softplus(hlr + hlr_offset) * hlr_scale + hlr_min
-                ax.plot(jax.nn.softplus(samples_["hlr"][k,:,0]/args.hlr_prior_sigma+args.hlr_prior_offset)*args.hlr_prior_scale + args.hlr_prior_min, "k", alpha=0.3)
+                ax.plot(jax.nn.sigmoid(samples_["hlr"][k,:,0]/args.hlr_prior_sigma)*(args.hlr_prior_max - args.hlr_prior_min) + args.hlr_prior_min, "k", alpha=0.3)
             if label == "flux":
                 # flux -> jax.nn.softplus(flux + flux_offset) * flux_scale + flux_min
-                ax.plot(jax.nn.softplus(samples_["flux"][k,:,0]/args.flux_prior_sigma+args.flux_prior_offset)*args.flux_prior_scale + args.flux_prior_min, "k", alpha=0.3)
+                ax.plot(jax.nn.sigmoid(samples_["flux"][k,:,0]/args.flux_prior_sigma)*(args.flux_prior_max - args.flux_prior_min) + args.flux_prior_min, "k", alpha=0.3)
             if label in ["e1", "e2"]:
                 #  e1, e2 -> to_unit_disk
                 e = jnp.stack([samples_["e1"][k,:,0]/args.ell_sigma * args.ell_scale, samples_["e2"][k,:,0]/args.ell_sigma * args.ell_scale], 0)
