@@ -52,11 +52,11 @@ srun python sersic_shear_numpyro_sampling_argparse.py \
     --g_prior_scale 0.3\
     --hlr_prior_sigma 2.0\
     --hlr_prior_offset 1.0\
-    --hlr_prior_scale 1/1.4\
+    --hlr_prior_scale 0.7142857142857143\
     --hlr_prior_min 0.2\
     --flux_prior_sigma 2.0\
     --flux_prior_offset 0.0\
-    --flux_prior_scale 1/15.\
+    --flux_prior_scale 0.06666666666666667\
     --flux_prior_min 0.05\
     --lr_map 3e-3\
     --n_steps_map 5000\
