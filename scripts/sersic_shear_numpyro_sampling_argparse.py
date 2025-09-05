@@ -128,7 +128,7 @@ def main():
     parser.add_argument('--num', type=int, default=20, help='Number of batch iterations')
     parser.add_argument('--num_steps', type=int, default=10000, help='Number of steps for sampling')
     parser.add_argument('--save_samples', type=bool, default=False, help='Whether to save samples')
-    parser.add_argument('--seed', type=int, default=33, help='Random seed')
+    parser.add_argument('--seed', type=int, default=None, help='Random seed (default: set seed randomly)')
 
     args = parser.parse_args()
     fov_size = args.Npx * args.pixel_scale / 3600 # in degrees
