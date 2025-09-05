@@ -199,7 +199,12 @@ def main():
     seeded_model_data_gen = seed(model_data_gen, key)
     # Conditioning model to generate observation with [g1, g2]
     conditionned_model = condition(seeded_model_data_gen, {"g1":args.g1_true*jnp.ones((1,))/(args.g_scale/args.g_sigma), "g2":args.g2_true*jnp.ones((1,))/(args.g_scale/args.g_sigma)})
-    data = conditionned_model()
+    data, data_params = conditionned_model()
+
+    # Save the data
+    np.save("../outputs/radio_data.npy", data)
+    np.save("../outputs/radio_data_params.npy", data_params)
+    np.save("../outputs/radio_psf_mask.npy", mask)
 
     # Init model for sampling
     key, subkey = jax.random.split(key)
@@ -223,10 +228,6 @@ def main():
                     flux_scale=args.flux_prior_scale,
                     flux_min=args.flux_prior_min)
     # seeded_model = seed(model, subkey)
-
-    # Save the data
-    np.save("../outputs/radio_data.npy", data)
-    np.save("../outputs/radio_psf_mask.npy", mask)
 
     # Plot observations
     data_complex = []
