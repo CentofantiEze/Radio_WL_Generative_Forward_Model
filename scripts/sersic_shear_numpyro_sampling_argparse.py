@@ -152,7 +152,6 @@ def main():
                                               E_lim=args.E_lim, 
                                               N_lim=args.N_lim, 
                                               Npx=args.Npx, 
-                                              pixel_scale=args.pixel_scale, 
                                               fov_size=fov_size, 
                                               track_time=args.track_time,
                                               n_times=args.n_times,
