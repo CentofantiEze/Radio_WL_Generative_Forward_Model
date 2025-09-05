@@ -17,21 +17,23 @@ def model_fn(Ngal=None, Npx=None, pixel_scale=None, uv_pos=None, noise_uv=None, 
             g_sigma=None,
             g_scale=None,
             hlr_sigma=None,
-            hlr_offset=None,
-            hlr_scale=None,
+            hlr_max=None,
             hlr_min=None,
             flux_sigma=None,
-            flux_offset=None,
-            flux_scale=None,
+            flux_max=None,
             flux_min=None):
 
     u = jnp.ones((Ngal,)) # sampling galaxies all at once
 
     # hlr
-    hlr = jax.nn.softplus((numpyro.sample("hlr", dist.Normal(0.*u, hlr_sigma*u))/hlr_sigma + hlr_offset)) * hlr_scale + hlr_min
-    
+    # hlr = jax.nn.softplus((numpyro.sample("hlr", dist.Normal(0.*u, hlr_sigma*u))/hlr_sigma + hlr_offset)) * hlr_scale + hlr_min
+    hlr_z = numpyro.sample("hlr", dist.Normal(0.*u, hlr_sigma*u))
+    hlr = hlr_min + jax.nn.sigmoid(hlr_z/hlr_sigma) * (hlr_max - hlr_min)
+
     # flux
-    flux = jax.nn.softplus((numpyro.sample("flux", dist.Normal(0.*u, flux_sigma*u))/flux_sigma + flux_offset)) * flux_scale + flux_min
+    # flux = jax.nn.softplus((numpyro.sample("flux", dist.Normal(0.*u, flux_sigma*u))/flux_sigma + flux_offset)) * flux_scale + flux_min
+    flux_z = numpyro.sample("flux", dist.Normal(0.*u, flux_sigma*u))
+    flux = flux_min + jax.nn.sigmoid(flux_z/flux_sigma) * (flux_max - flux_min)
 
     # ellipticity
     e1 = numpyro.sample("e1", dist.Normal(0.*u, ell_sigma*u))/ell_sigma * ell_scale

@@ -46,23 +46,20 @@ srun python sersic_shear_numpyro_sampling_argparse.py \
     --df 1e8\
     --n_freqs 4\
     --radio_array_seed 123\
-    --ell_prior_sigma 0.5\
+    --ell_prior_sigma 1.0\
     --ell_prior_scale 0.3\
     --g_prior_sigma 1.0\
     --g_prior_scale 0.3\
-    --hlr_prior_sigma 2.0\
-    --hlr_prior_offset 1.0\
-    --hlr_prior_scale 0.7142857142857143\
-    --hlr_prior_min 0.2\
-    --flux_prior_sigma 2.0\
-    --flux_prior_offset 0.0\
-    --flux_prior_scale 0.06666666666666667\
-    --flux_prior_min 0.05\
+    --hlr_prior_sigma 1.0\
+    --hlr_prior_min 0.1\
+    --hlr_prior_max 3.0\
+    --flux_prior_sigma 1.0\
+    --flux_prior_min 0.03\
+    --flux_prior_max 0.25\
     --lr_map 3e-3\
     --n_steps_map 5000\
     --n_warmup 500\
     --num_chains 10\
     --step_size 0.005\
     --num 20\
-    --num_steps 10000\
-    --save_samples false
+    --num_steps 10000

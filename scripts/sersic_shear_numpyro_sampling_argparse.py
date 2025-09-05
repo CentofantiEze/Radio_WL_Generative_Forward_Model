@@ -94,7 +94,7 @@ def main():
     parser.add_argument('--params_dir', type=str, default='../data/trecs_gal_params.npy', help='Directory for galaxy hlr and flux parameter fit')
     parser.add_argument('--g1_true', type=float, default=-0.05, help='True g1 shear value')
     parser.add_argument('--g2_true', type=float, default=0.05, help='True g2 shear value')
-    parser.add_argument('--ell_sigma', type=float, default=0.5, help='Ellipticity prior sigma')
+    parser.add_argument('--ell_sigma', type=float, default=1., help='Ellipticity prior sigma')
     parser.add_argument('--ell_scale', type=float, default=0.3, help='Ellipticity prior scale')
     parser.add_argument('--g_sigma', type=float, default=1.0, help='Shear prior sigma')
     parser.add_argument('--g_scale', type=float, default=0.3, help='Shear prior scale')
@@ -108,18 +108,16 @@ def main():
     parser.add_argument('--df', type=float, default=1e8, help='Frequency bandwidth')
     parser.add_argument('--n_freqs', type=int, default=4, help='Number of frequency channels')
     parser.add_argument('--radio_array_seed', type=int, default=123, help='Random seed for the radio array generation')
-    parser.add_argument('--ell_prior_sigma', type=float, default=0.5, help='Ellipticity prior sigma')
+    parser.add_argument('--ell_prior_sigma', type=float, default=1.0, help='Ellipticity prior sigma')
     parser.add_argument('--ell_prior_scale', type=float, default=0.3, help='Ellipticity prior scale')
     parser.add_argument('--g_prior_sigma', type=float, default=1.0, help='Shear prior sigma')
     parser.add_argument('--g_prior_scale', type=float, default=0.3, help='Shear prior scale')
-    parser.add_argument('--hlr_prior_sigma', type=float, default=2.0, help='Half-light radius prior sigma')
-    parser.add_argument('--hlr_prior_offset', type=float, default=1.0, help='Half-light radius prior offset')
-    parser.add_argument('--hlr_prior_scale', type=float, default=0.7142857142857143, help='Half-light radius prior scale')
-    parser.add_argument('--hlr_prior_min', type=float, default=0.2, help='Half-light radius prior min')
-    parser.add_argument('--flux_prior_sigma', type=float, default=2.0, help='Flux prior sigma')
-    parser.add_argument('--flux_prior_offset', type=float, default=0.0, help='Flux prior offset')
-    parser.add_argument('--flux_prior_scale', type=float, default=0.06666666666666667, help='Flux prior scale')
-    parser.add_argument('--flux_prior_min', type=float, default=0.05, help='Flux prior min')
+    parser.add_argument('--hlr_prior_sigma', type=float, default=1.0, help='Half-light radius prior sigma')
+    parser.add_argument('--hlr_prior_min', type=float, default=0.1, help='Half-light radius prior min')
+    parser.add_argument('--hlr_prior_max', type=float, default=3.0, help='Half-light radius prior max')
+    parser.add_argument('--flux_prior_sigma', type=float, default=1.0, help='Flux prior sigma')
+    parser.add_argument('--flux_prior_min', type=float, default=0.03, help='Flux prior min')
+    parser.add_argument('--flux_prior_max', type=float, default=0.25, help='Flux prior max')
     parser.add_argument('--lr_map', type=float, default=3e-3, help='MAP learning rate')
     parser.add_argument('--n_steps_map', type=int, default=5000, help='Number of steps for MAP')
     parser.add_argument('--n_warmup', type=int, default=500, help='Number of warmup steps for MEADS')
@@ -220,12 +218,10 @@ def main():
                     g_sigma=args.g_prior_sigma,
                     g_scale=args.g_prior_scale,
                     hlr_sigma=args.hlr_prior_sigma,
-                    hlr_offset=args.hlr_prior_offset,
-                    hlr_scale=args.hlr_prior_scale,
+                    hlr_max=args.hlr_prior_max,
                     hlr_min=args.hlr_prior_min,
                     flux_sigma=args.flux_prior_sigma,
-                    flux_offset=args.flux_prior_offset,
-                    flux_scale=args.flux_prior_scale,
+                    flux_max=args.flux_prior_max,
                     flux_min=args.flux_prior_min)
     # seeded_model = seed(model, subkey)
 
