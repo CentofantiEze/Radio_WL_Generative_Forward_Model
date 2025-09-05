@@ -7,7 +7,7 @@ import numpyro.distributions as dist
 from functools import partial
 
 from data_gen_utils import draw_exp_profile
-from func_utils import clip_by_l2_norm
+from func_utils import to_unit_disk
 
 
 #@partial(jax.jit, static_argnums=(0,1,2,3,4))
@@ -43,10 +43,10 @@ def model_fn(Ngal=None, Npx=None, pixel_scale=None, uv_pos=None, noise_uv=None, 
 
     # clipping undefined e and g values
     e = jnp.stack([e1, e2], 0)
-    e = clip_by_l2_norm(e)
+    e = to_unit_disk(e)
 
     g = jnp.repeat(jnp.stack([g1, g2], 0), Ngal, -1)
-    g = clip_by_l2_norm(g)
+    g = to_unit_disk(g)
 
     draw = partial(draw_exp_profile, uv_pos=uv_pos, Npx=Npx, pixel_scale=pixel_scale)
     im_gal = jax.vmap(draw)(hlr=hlr,

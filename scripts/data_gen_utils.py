@@ -8,7 +8,7 @@ import numpyro
 import numpyro.distributions as dist
 
 from func_utils import complex_2_stack
-from func_utils import clip_by_l2_norm
+from func_utils import to_unit_disk
 
 def draw_exp_profile(hlr, flux, e1, e2, g1, g2, uv_pos, Npx, pixel_scale):
     gal = galsim.Exponential(half_light_radius=hlr, flux=flux)
@@ -79,10 +79,10 @@ def gen_sersic_profile(Ngal=None, Npx=None, pixel_scale=None, uv_pos=None, noise
 
     # clipping undefined e and g values
     e = jnp.stack([e1, e2], 0)
-    e = clip_by_l2_norm(e)
+    e = to_unit_disk(e)
 
     g = jnp.repeat(jnp.stack([g1, g2], 0), Ngal, -1)
-    g = clip_by_l2_norm(g)
+    g = to_unit_disk(g)
 
     # generate galaxy image
     draw = partial(draw_sersic_profile, n=n, uv_pos=uv_pos, Npx=Npx, pixel_scale=pixel_scale)
