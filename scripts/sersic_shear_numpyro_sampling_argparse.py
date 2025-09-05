@@ -24,7 +24,7 @@ import galsim as gs
 from psf_utils import compute_radio_uv_mask
 from model_utils import model_fn
 from data_gen_utils import gen_sersic_profile
-from func_utils import stack_2_complex, clip_by_l2_norm
+from func_utils import stack_2_complex, to_unit_disk
 
 import corner
 
@@ -431,17 +431,17 @@ def main():
                 # flux -> jax.nn.softplus(flux + flux_offset) * flux_scale + flux_min
                 ax.plot(jax.nn.softplus(samples_["flux"][k,:,0]/args.flux_prior_sigma+args.flux_prior_offset)*args.flux_prior_scale + args.flux_prior_min, "k", alpha=0.3)
             if label in ["e1", "e2"]:
-                #  e1, e2 -> clip_by_l2_norm
+                #  e1, e2 -> to_unit_disk
                 e = jnp.stack([samples_["e1"][k,:,0]/args.ell_sigma * args.ell_scale, samples_["e2"][k,:,0]/args.ell_sigma * args.ell_scale], 0)
-                e = clip_by_l2_norm(e)
+                e = to_unit_disk(e)
                 if label == "e1":
                     ax.plot(e[0], "k", alpha=0.3)
                 else:
                     ax.plot(e[1], "k", alpha=0.3)
             if label in ["g1", "g2"]:
-                # g1, g2 -> clip_by_l2_norm
+                # g1, g2 -> to_unit_disk
                 g = jnp.stack([samples_["g1"][k,:,0]/args.g_sigma * args.g_scale, samples_["g2"][k,:,0]/args.g_sigma * args.g_scale], 0)
-                g = clip_by_l2_norm(g)
+                g = to_unit_disk(g)
                 if label == "g1":
                     ax.plot(g[0], "k", alpha=0.3)
                 else:
