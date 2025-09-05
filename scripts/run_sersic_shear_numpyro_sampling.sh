@@ -33,9 +33,9 @@ srun python sersic_shear_numpyro_sampling_argparse.py \
     --g1_true -0.05\
     --g2_true 0.05\
     --ell_sigma 1.0\
-    --ell_scale 0.3\
+    --ell_scale 0.2\
     --g_sigma 1.0\
-    --g_scale 0.3\
+    --g_scale 0.1\
     --sersic_index 1.0\
     --n_antenna 50\
     --E_lim 50e3\
@@ -47,9 +47,9 @@ srun python sersic_shear_numpyro_sampling_argparse.py \
     --n_freqs 4\
     --radio_array_seed 123\
     --ell_prior_sigma 1.0\
-    --ell_prior_scale 0.3\
+    --ell_prior_scale 0.2\
     --g_prior_sigma 1.0\
-    --g_prior_scale 0.3\
+    --g_prior_scale 0.1\
     --hlr_prior_sigma 1.0\
     --hlr_prior_min 0.1\
     --hlr_prior_max 3.0\
