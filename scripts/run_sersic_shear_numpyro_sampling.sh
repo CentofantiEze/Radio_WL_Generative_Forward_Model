@@ -58,7 +58,7 @@ srun python sersic_shear_numpyro_sampling_argparse.py \
     --flux_prior_max 0.25\
     --lr_map 3e-3\
     --n_steps_map 5000\
-    --n_warmup 500\
+    --n_warmup 5000\
     --num_chains 10\
     --step_size 0.005\
     --num 20\
