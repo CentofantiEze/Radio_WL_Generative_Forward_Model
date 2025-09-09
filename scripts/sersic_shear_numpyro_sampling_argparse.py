@@ -1,40 +1,36 @@
-import numpy as np
-import matplotlib.pyplot as plt
-
-import jax
-import jax.numpy as jnp
-import numpyro
-import numpyro.distributions as dist
-from numpyro.handlers import condition , seed , trace
-
-from einops import rearrange
-
-import optax
-from tqdm import tqdm
-
-import blackjax
+import warnings
 from functools import partial
 
-import warnings
-warnings.filterwarnings('ignore')
+import blackjax
+import jax
+import jax.numpy as jnp
+import matplotlib.pyplot as plt
+import numpy as np
+import numpyro
+import numpyro.distributions as dist
+import optax
+from einops import rearrange
+from numpyro.handlers import condition, seed, trace
+
+warnings.filterwarnings("ignore")
+
+import json
+import os
+import sys
 
 import jax_galsim as galsim
-import galsim as gs
-
-import sys
-import os
 
 # Add project root to sys.path
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-from src.shearest.psf_utils import compute_radio_uv_mask
-from src.shearest.model_utils import model_fn
-from src.shearest.data_gen_utils import gen_sersic_profile
-from src.shearest.func_utils import stack_2_complex, to_unit_disk
+import argparse
+from argparse import Namespace
 
 import corner
-
-import argparse
+from src.shearest.data_gen_utils import gen_sersic_profile
+from src.shearest.func_utils import stack_2_complex, to_unit_disk
+from src.shearest.model_utils import model_fn
+from src.shearest.psf_utils import compute_radio_uv_mask
 
 # ### Simulation parameters
 # Ngal = 100
@@ -93,52 +89,144 @@ import argparse
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--Ngal', type=int, default=100, help='Number of galaxies')
-    parser.add_argument('--Npx', type=int, default=128, help='Image size in pixels')
-    parser.add_argument('--pixel_scale', type=float, default=0.15, help='Pixel scale in arcsec/pixel')
-    parser.add_argument('--noise_uv', type=float, default=0.004, help='UV noise level')
-    parser.add_argument('--params_dir', type=str, default='../data/trecs_gal_params.npy', help='Directory for galaxy hlr and flux parameter fit')
-    parser.add_argument('--g1_true', type=float, default=-0.05, help='True g1 shear value')
-    parser.add_argument('--g2_true', type=float, default=0.05, help='True g2 shear value')
-    parser.add_argument('--ell_sigma', type=float, default=1., help='Ellipticity prior sigma')
-    parser.add_argument('--ell_scale', type=float, default=0.2, help='Ellipticity prior scale')
-    parser.add_argument('--g_sigma', type=float, default=1.0, help='Shear prior sigma')
-    parser.add_argument('--g_scale', type=float, default=0.1, help='Shear prior scale')
-    parser.add_argument('--sersic_index', type=float, default=1.0, help='Sersic index')
-    parser.add_argument('--n_antenna', type=int, default=50, help='Number of antennas')
-    parser.add_argument('--E_lim', type=float, default=50e3, help='East limit')
-    parser.add_argument('--N_lim', type=float, default=50e3, help='North limit')
-    parser.add_argument('--track_time', type=float, default=10, help='Track time')
-    parser.add_argument('--n_times', type=int, default=4, help='Number of times')
-    parser.add_argument('--f', type=float, default=1.4e9, help='Frequency')
-    parser.add_argument('--df', type=float, default=1e8, help='Frequency bandwidth')
-    parser.add_argument('--n_freqs', type=int, default=4, help='Number of frequency channels')
-    parser.add_argument('--radio_array_seed', type=int, default=123, help='Random seed for the radio array generation')
-    parser.add_argument('--ell_prior_sigma', type=float, default=1.0, help='Ellipticity prior sigma')
-    parser.add_argument('--ell_prior_scale', type=float, default=0.2, help='Ellipticity prior scale')
-    parser.add_argument('--g_prior_sigma', type=float, default=1.0, help='Shear prior sigma')
-    parser.add_argument('--g_prior_scale', type=float, default=0.1, help='Shear prior scale')
-    parser.add_argument('--hlr_prior_sigma', type=float, default=1.0, help='Half-light radius prior sigma')
-    parser.add_argument('--hlr_prior_min', type=float, default=0.1, help='Half-light radius prior min')
-    parser.add_argument('--hlr_prior_max', type=float, default=3.0, help='Half-light radius prior max')
-    parser.add_argument('--flux_prior_sigma', type=float, default=1.0, help='Flux prior sigma')
-    parser.add_argument('--flux_prior_min', type=float, default=0.03, help='Flux prior min')
-    parser.add_argument('--flux_prior_max', type=float, default=0.25, help='Flux prior max')
-    parser.add_argument('--lr_map', type=float, default=1e-2, help='MAP learning rate')
-    parser.add_argument('--n_steps_map', type=int, default=5000, help='Number of steps for MAP')
-    parser.add_argument('--n_warmup', type=int, default=5000, help='Number of warmup steps for MEADS')
-    parser.add_argument('--num_chains', type=int, default=10, help='Number of chains for HMC')
-    parser.add_argument('--step_size', type=float, default=0.005, help='Step size for HMC')
-    parser.add_argument('--num', type=int, default=20, help='Number of batch iterations')
-    parser.add_argument('--num_steps', type=int, default=10000, help='Number of steps for sampling')
-    parser.add_argument('--save_samples', type=bool, default=False, help='Whether to save samples')
-    parser.add_argument('--seed', type=int, default=None, help='Random seed (default: set seed randomly)')
+    parser.add_argument("--Ngal", type=int, default=100, help="Number of galaxies")
+    parser.add_argument("--Npx", type=int, default=128, help="Image size in pixels")
+    parser.add_argument(
+        "--pixel_scale", type=float, default=0.15, help="Pixel scale in arcsec/pixel"
+    )
+    parser.add_argument("--noise_uv", type=float, default=0.004, help="UV noise level")
+    parser.add_argument(
+        "--params_dir",
+        type=str,
+        default="../data/trecs_gal_params.npy",
+        help="Directory for galaxy hlr and flux parameter fit",
+    )
+    parser.add_argument(
+        "--g1_true", type=float, default=-0.05, help="True g1 shear value"
+    )
+    parser.add_argument(
+        "--g2_true", type=float, default=0.05, help="True g2 shear value"
+    )
+    parser.add_argument(
+        "--ell_sigma", type=float, default=1.0, help="Ellipticity prior sigma"
+    )
+    parser.add_argument(
+        "--ell_scale", type=float, default=0.2, help="Ellipticity prior scale"
+    )
+    parser.add_argument("--g_sigma", type=float, default=1.0, help="Shear prior sigma")
+    parser.add_argument("--g_scale", type=float, default=0.1, help="Shear prior scale")
+    parser.add_argument("--sersic_index", type=float, default=1.0, help="Sersic index")
+    parser.add_argument("--n_antenna", type=int, default=50, help="Number of antennas")
+    parser.add_argument("--E_lim", type=float, default=50e3, help="East limit")
+    parser.add_argument("--N_lim", type=float, default=50e3, help="North limit")
+    parser.add_argument("--track_time", type=float, default=10, help="Track time")
+    parser.add_argument("--n_times", type=int, default=4, help="Number of times")
+    parser.add_argument("--f", type=float, default=1.4e9, help="Frequency")
+    parser.add_argument("--df", type=float, default=1e8, help="Frequency bandwidth")
+    parser.add_argument(
+        "--n_freqs", type=int, default=4, help="Number of frequency channels"
+    )
+    parser.add_argument(
+        "--radio_array_seed",
+        type=int,
+        default=123,
+        help="Random seed for the radio array generation",
+    )
+    parser.add_argument(
+        "--ell_prior_sigma", type=float, default=1.0, help="Ellipticity prior sigma"
+    )
+    parser.add_argument(
+        "--ell_prior_scale", type=float, default=0.2, help="Ellipticity prior scale"
+    )
+    parser.add_argument(
+        "--g_prior_sigma", type=float, default=1.0, help="Shear prior sigma"
+    )
+    parser.add_argument(
+        "--g_prior_scale", type=float, default=0.1, help="Shear prior scale"
+    )
+    parser.add_argument(
+        "--hlr_prior_sigma",
+        type=float,
+        default=1.0,
+        help="Half-light radius prior sigma",
+    )
+    parser.add_argument(
+        "--hlr_prior_min", type=float, default=0.1, help="Half-light radius prior min"
+    )
+    parser.add_argument(
+        "--hlr_prior_max", type=float, default=3.0, help="Half-light radius prior max"
+    )
+    parser.add_argument(
+        "--flux_prior_sigma", type=float, default=1.0, help="Flux prior sigma"
+    )
+    parser.add_argument(
+        "--flux_prior_min", type=float, default=0.03, help="Flux prior min"
+    )
+    parser.add_argument(
+        "--flux_prior_max", type=float, default=0.25, help="Flux prior max"
+    )
+    parser.add_argument("--lr_map", type=float, default=1e-2, help="MAP learning rate")
+    parser.add_argument(
+        "--n_steps_map", type=int, default=5000, help="Number of steps for MAP"
+    )
+    parser.add_argument(
+        "--n_warmup", type=int, default=5000, help="Number of warmup steps for MEADS"
+    )
+    parser.add_argument(
+        "--num_chains", type=int, default=10, help="Number of chains for HMC"
+    )
+    parser.add_argument(
+        "--step_size", type=float, default=0.005, help="Step size for HMC"
+    )
+    parser.add_argument(
+        "--num", type=int, default=20, help="Number of batch iterations"
+    )
+    parser.add_argument(
+        "--num_steps", type=int, default=10000, help="Number of steps for sampling"
+    )
+    parser.add_argument(
+        "--save_samples", type=bool, default=False, help="Whether to save samples"
+    )
+    parser.add_argument(
+        "--seed",
+        type=int,
+        default=None,
+        help="Random seed (default: set seed randomly)",
+    )
+    parser.add_argument(
+        "--id", type=str, default=None, help="Unique identifier for the run"
+    )
+    parser.add_argument(
+        "--output_dir", type=str, default="../outputs", help="Directory to save outputs"
+    )
+    parser.add_argument(
+        "--args",
+        type=str,
+        default=None,
+        help="Absolute path to a json file with arguments",
+    )
 
     args = parser.parse_args()
-    fov_size = args.Npx * args.pixel_scale / 3600 # in degrees
+    # If using arguments from file, load them.
+    if args.args is not None:
+        id_ = args.id
+        out_dir_ = args.output_dir
+        with open(args.args, "r") as f:
+            args_dict = json.load(f)
+        args = Namespace(**args_dict)
+        args.id = id_
+        args.output_dir = out_dir_
+
+    fov_size = args.Npx * args.pixel_scale / 3600  # in degrees
+
+    # create output folder
+    out_dir = args.output_dir
+    if args.id is not None:
+        out_dir = os.path.join(args.output_dir, args.id)
+    os.makedirs(out_dir, exist_ok=True)
 
     # create log file
-    log_file = open("../outputs/radio_sampling.log", "w")
+    log_file = open(os.path.join(out_dir, "radio_sampling.log"), "w")
 
     # print parameters to log file
     print(f"Ngal: {args.Ngal}", file=log_file)
@@ -151,34 +239,39 @@ def main():
     print(f"Ellipticity prior scale: {args.ell_scale}", file=log_file)
     print(f"Shear prior scale: {args.g_scale}", file=log_file)
 
-
     # Compute the radio PSF
-    uv_pos, mask, psf = compute_radio_uv_mask(n_antenna=args.n_antenna, 
-                                              E_lim=args.E_lim, 
-                                              N_lim=args.N_lim, 
-                                              Npx=args.Npx, 
-                                              fov_size=fov_size, 
-                                              track_time=args.track_time,
-                                              n_times=args.n_times,
-                                              f=args.f,
-                                              df=args.df,
-                                              n_freqs=args.n_freqs,
-                                              seed=args.radio_array_seed)
+    uv_pos, mask, psf = compute_radio_uv_mask(
+        n_antenna=args.n_antenna,
+        E_lim=args.E_lim,
+        N_lim=args.N_lim,
+        Npx=args.Npx,
+        fov_size=fov_size,
+        track_time=args.track_time,
+        n_times=args.n_times,
+        f=args.f,
+        df=args.df,
+        n_freqs=args.n_freqs,
+        seed=args.radio_array_seed,
+    )
 
-    plt.subplots(1,3, figsize=(12, 4))
+    plt.subplots(1, 3, figsize=(12, 4))
     plt.subplot(131)
     plt.imshow(np.real(mask))
-    plt.title('UV mask')
+    plt.title("UV mask")
     plt.colorbar()
     plt.subplot(132)
     plt.imshow(psf)
-    plt.title('Radio PSF')
+    plt.title("Radio PSF")
     plt.colorbar()
     plt.subplot(133)
-    plt.imshow(galsim.Gaussian(flux=1., sigma=.2).drawImage(nx=args.Npx, ny=args.Npx, scale=args.pixel_scale).array)
-    plt.title('Gaussian PSF')
+    plt.imshow(
+        galsim.Gaussian(flux=1.0, sigma=0.2)
+        .drawImage(nx=args.Npx, ny=args.Npx, scale=args.pixel_scale)
+        .array
+    )
+    plt.title("Gaussian PSF")
     plt.colorbar()
-    plt.savefig("../outputs/radio_psf.pdf")
+    plt.savefig(os.path.join(out_dir, "radio_psf.pdf"))
 
     # Init seed
     if args.seed is None:
@@ -188,47 +281,57 @@ def main():
     key = jax.random.PRNGKey(args.seed)
 
     # Generate observations
-    model_data_gen = partial(gen_sersic_profile,
-                            Ngal=args.Ngal, 
-                            Npx=args.Npx, 
-                            pixel_scale=args.pixel_scale,  
-                            uv_pos=uv_pos, 
-                            noise_uv=args.noise_uv, 
-                            params_dir=args.params_dir,
-                            ell_sigma=args.ell_sigma,
-                            ell_scale=args.ell_scale,
-                            g_sigma=args.g_sigma,
-                            g_scale=args.g_scale,
-                            n=args.sersic_index) 
+    model_data_gen = partial(
+        gen_sersic_profile,
+        Ngal=args.Ngal,
+        Npx=args.Npx,
+        pixel_scale=args.pixel_scale,
+        uv_pos=uv_pos,
+        noise_uv=args.noise_uv,
+        params_dir=args.params_dir,
+        ell_sigma=args.ell_sigma,
+        ell_scale=args.ell_scale,
+        g_sigma=args.g_sigma,
+        g_scale=args.g_scale,
+        n=args.sersic_index,
+    )
     seeded_model_data_gen = seed(model_data_gen, key)
     # Conditioning model to generate observation with [g1, g2]
-    conditionned_model = condition(seeded_model_data_gen, {"g1":args.g1_true*jnp.ones((1,))/(args.g_scale/args.g_sigma), "g2":args.g2_true*jnp.ones((1,))/(args.g_scale/args.g_sigma)})
+    conditionned_model = condition(
+        seeded_model_data_gen,
+        {
+            "g1": args.g1_true * jnp.ones((1,)) / (args.g_scale / args.g_sigma),
+            "g2": args.g2_true * jnp.ones((1,)) / (args.g_scale / args.g_sigma),
+        },
+    )
     data, data_params = conditionned_model()
 
     # Save the data
-    np.save("../outputs/radio_data.npy", data)
-    np.save("../outputs/radio_data_params.npy", data_params)
-    np.save("../outputs/radio_psf_mask.npy", mask)
+    np.save(os.path.join(out_dir, "radio_data.npy"), data)
+    np.save(os.path.join(out_dir, "radio_data_params.npy"), data_params)
+    np.save(os.path.join(out_dir, "radio_psf_mask.npy"), mask)
 
     # Init model for sampling
     key, subkey = jax.random.split(key)
-    model = partial(model_fn, 
-                    Ngal=args.Ngal, 
-                    Npx=args.Npx, 
-                    pixel_scale=args.pixel_scale,  
-                    uv_pos=uv_pos, 
-                    noise_uv=args.noise_uv, 
-                    obs=data,
-                    ell_sigma=args.ell_prior_sigma,
-                    ell_scale=args.ell_prior_scale,
-                    g_sigma=args.g_prior_sigma,
-                    g_scale=args.g_prior_scale,
-                    hlr_sigma=args.hlr_prior_sigma,
-                    hlr_max=args.hlr_prior_max,
-                    hlr_min=args.hlr_prior_min,
-                    flux_sigma=args.flux_prior_sigma,
-                    flux_max=args.flux_prior_max,
-                    flux_min=args.flux_prior_min)
+    model = partial(
+        model_fn,
+        Ngal=args.Ngal,
+        Npx=args.Npx,
+        pixel_scale=args.pixel_scale,
+        uv_pos=uv_pos,
+        noise_uv=args.noise_uv,
+        obs=data,
+        ell_sigma=args.ell_prior_sigma,
+        ell_scale=args.ell_prior_scale,
+        g_sigma=args.g_prior_sigma,
+        g_scale=args.g_prior_scale,
+        hlr_sigma=args.hlr_prior_sigma,
+        hlr_max=args.hlr_prior_max,
+        hlr_min=args.hlr_prior_min,
+        flux_sigma=args.flux_prior_sigma,
+        flux_max=args.flux_prior_max,
+        flux_min=args.flux_prior_min,
+    )
     # seeded_model = seed(model, subkey)
 
     # Plot observations
@@ -238,16 +341,16 @@ def main():
         img_aux[uv_pos] = vis
         data_complex.append(img_aux)
     data_ = rearrange(data_complex, "(n1 n2) h w -> (n1 h) (n2 w)", n1=10, n2=10)
-    plt.figure(figsize=(10,10))
+    plt.figure(figsize=(10, 10))
     plt.imshow(np.abs(data_), vmin=np.min(np.abs(data_)), vmax=np.max(np.abs(data_)))
-    print('Data shape:', data_.shape)
-    print('Data max:', np.max(np.abs(data_)))
-    print(f'Data max: {np.max(np.abs(data_))}', file=log_file)
+    print("Data shape:", data_.shape)
+    print("Data max:", np.max(np.abs(data_)))
+    print(f"Data max: {np.max(np.abs(data_))}", file=log_file)
     plt.colorbar()
-    plt.savefig("../outputs/radio_data.pdf")
+    plt.savefig(os.path.join(out_dir, "radio_data.pdf"))
 
     # Plot a random galaxy
-    plt.subplots(1,2,figsize=(12,4))
+    plt.subplots(1, 2, figsize=(12, 4))
     plt.subplot(121)
     idx = np.random.randint(0, args.Ngal)
     plt.imshow(np.abs(data_complex[idx]))
@@ -258,21 +361,28 @@ def main():
     plt.title(f"Observed galaxy {idx} image")
     plt.colorbar()
     plt.tight_layout()
-    plt.savefig("../outputs/radio_data_galaxy.pdf")
+    plt.savefig(os.path.join(out_dir, "radio_data_galaxy.pdf"))
 
     # Sample parameters from their prior
     def draw_params(key):
         t = trace(seed(model, key)).get_trace()
-        return {key:t[key]["value"] for key in t if not key=="obs"}
+        return {key: t[key]["value"] for key in t if not key == "obs"}
 
-    keys = jax.random.split(key, args.num_chains)[:args.num_chains]
+    keys = jax.random.split(key, args.num_chains)[: args.num_chains]
     init_val_ = jax.vmap(draw_params)(keys)
-    np.save("../outputs/radio_init_val.npy", init_val_, allow_pickle=True)
+    np.save(os.path.join(out_dir, "radio_init_val.npy"), init_val_, allow_pickle=True)
 
     # Get the log prob of the joint distribution, conditioned on data
     @jax.jit
     def log_prob_fn(params):
-        return numpyro.infer.util.log_density(model, (), {"obs":data,}, params)[0]
+        return numpyro.infer.util.log_density(
+            model,
+            (),
+            {
+                "obs": data,
+            },
+            params,
+        )[0]
 
     print(f"MAP learning rate: {args.lr_map}", file=log_file)
     print(f"MAP number of steps: {args.n_steps_map}", file=log_file)
@@ -292,29 +402,45 @@ def main():
             grads = jax.grad(nll)(params)
             updates, opt_state = optimizer.update(grads, opt_state, params)
             params = optax.apply_updates(params, updates)
-            return (params, opt_state), 0.
+            return (params, opt_state), 0.0
 
-        (params, _) , _ = jax.lax.scan(update_step, (init_params, opt_state), length=args.n_steps_map)
+        (params, _), _ = jax.lax.scan(
+            update_step, (init_params, opt_state), length=args.n_steps_map
+        )
 
         return params
 
     init_val = jax.vmap(find_map)(init_val_)
 
-    print(init_val["g1"]*(args.g_scale/args.g_sigma), init_val["g2"]*(args.g_scale/args.g_sigma))
-    print(f"Initial guess: g1={init_val['g1']*(args.g_scale/args.g_sigma)}, g2={init_val['g2']*(args.g_scale/args.g_sigma)}", file=log_file)
-    np.save("../outputs/radio_map_val.npy", init_val, allow_pickle=True)
+    print(
+        init_val["g1"] * (args.g_scale / args.g_sigma),
+        init_val["g2"] * (args.g_scale / args.g_sigma),
+    )
+    print(
+        f"Initial guess: g1={init_val['g1']*(args.g_scale/args.g_sigma)}, g2={init_val['g2']*(args.g_scale/args.g_sigma)}",
+        file=log_file,
+    )
+    np.save(os.path.join(out_dir, "radio_map_val.npy"), init_val, allow_pickle=True)
 
     # Plot the initial guess for the shear
     plt.figure()
-    plt.scatter(init_val_["g1"]*(args.g_scale/args.g_sigma), init_val_["g2"]*(args.g_scale/args.g_sigma), label='Initial guess')
-    plt.scatter(init_val["g1"]*(args.g_scale/args.g_sigma), init_val["g2"]*(args.g_scale/args.g_sigma), label='MAP estimate')
-    plt.scatter(args.g1_true, args.g2_true, color='red', label='True shear')
-    plt.xlabel('g1')
-    plt.ylabel('g2')
-    plt.title('Initial guess for the shear')
+    plt.scatter(
+        init_val_["g1"] * (args.g_scale / args.g_sigma),
+        init_val_["g2"] * (args.g_scale / args.g_sigma),
+        label="Initial guess",
+    )
+    plt.scatter(
+        init_val["g1"] * (args.g_scale / args.g_sigma),
+        init_val["g2"] * (args.g_scale / args.g_sigma),
+        label="MAP estimate",
+    )
+    plt.scatter(args.g1_true, args.g2_true, color="red", label="True shear")
+    plt.xlabel("g1")
+    plt.ylabel("g2")
+    plt.title("Initial guess for the shear")
     plt.legend()
     # plt.show()
-    plt.savefig("../outputs/radio_initial_guess.pdf")
+    plt.savefig(os.path.join(out_dir, "radio_initial_guess.pdf"))
 
     # Use the the MEADS algorithm for parallel chains on GPUs
     """
@@ -324,36 +450,40 @@ def main():
     """
 
     warmup = blackjax.meads_adaptation(
-                log_prob_fn,
-                num_chains=args.num_chains,
-            )
+        log_prob_fn,
+        num_chains=args.num_chains,
+    )
 
     key_warmup, key_sample = jax.random.split(key)
 
     (last_states, parameters), _ = warmup.run(
-                key_warmup,
-                init_val,
-                num_steps=args.n_warmup,
-            )
+        key_warmup,
+        init_val,
+        num_steps=args.n_warmup,
+    )
 
-    print('Step size:',parameters["step_size"])
+    print("Step size:", parameters["step_size"])
     print(f"Step size: {parameters['step_size']}", file=log_file)
     parameters["step_size"] = args.step_size
-    print('Set step size to:',parameters["step_size"])
+    print("Set step size to:", parameters["step_size"])
     print(f"Set step size to: {parameters['step_size']}", file=log_file)
     print(parameters.keys(), file=log_file)
     print(parameters, file=log_file)
-    np.save("../outputs/radio_meads_warmup.npy", last_states.position, allow_pickle=True)
+    np.save(
+        os.path.join(out_dir, "radio_meads_warmup.npy"),
+        last_states.position,
+        allow_pickle=True,
+    )
 
     kernel = blackjax.ghmc(log_prob_fn, **parameters)
 
     @partial(jax.jit, static_argnames=("num_steps",))
     def run_hmc(init_states, key, num_steps=1):
-        
+
         def make_step(state, key):
             state, info = kernel.step(key, state)
             return state, (state, info)
-        
+
         keys = jax.random.split(key, num_steps)
         last_states, (samples, info) = jax.lax.scan(make_step, init_states, keys)
 
@@ -367,40 +497,82 @@ def main():
 
     key_chains = jax.random.split(key_sample, args.num_chains)
 
-    last_states, _ = jax.vmap(lambda init_states, keys: run_hmc(init_states, keys, 1))(last_states, key_chains)
+    last_states, _ = jax.vmap(lambda init_states, keys: run_hmc(init_states, keys, 1))(
+        last_states, key_chains
+    )
 
     sample_list = []
 
-    keys = jax.vmap(jax.random.split, in_axes=(0,None))(key_chains,args.num)
+    keys = jax.vmap(jax.random.split, in_axes=(0, None))(key_chains, args.num)
 
     for i in range(args.num):
-        print("Chain", i+1, "of", 2*args.num, "running...")
-        last_states, (samples, info) = jax.vmap(lambda init_states, keys: run_hmc(init_states, keys, args.num_steps))(last_states, keys[:,i,:])
+        print("Chain", i + 1, "of", 2 * args.num, "running...")
+        last_states, (samples, info) = jax.vmap(
+            lambda init_states, keys: run_hmc(init_states, keys, args.num_steps)
+        )(last_states, keys[:, i, :])
         sample_list.append(samples)
 
-    samples_ = {key: np.concatenate([sample_list[k].position[key] for k in range(args.num)], 1) for key in last_states.position}
-    print("ESS g1", blackjax.diagnostics.effective_sample_size(samples_["g1"][...,0]))
-    print("ESS g2", blackjax.diagnostics.effective_sample_size(samples_["g2"][...,0]))
-    print("ESS hlr", blackjax.diagnostics.effective_sample_size(samples_["hlr"][...,0]))
-    print("ESS flux", blackjax.diagnostics.effective_sample_size(samples_["flux"][...,0]))
-    print("ESS e1", blackjax.diagnostics.effective_sample_size(samples_["e1"][...,0]))
-    print("ESS e2", blackjax.diagnostics.effective_sample_size(samples_["e2"][...,0]))
+    samples_ = {
+        key: np.concatenate([sample_list[k].position[key] for k in range(args.num)], 1)
+        for key in last_states.position
+    }
+    print("ESS g1", blackjax.diagnostics.effective_sample_size(samples_["g1"][..., 0]))
+    print("ESS g2", blackjax.diagnostics.effective_sample_size(samples_["g2"][..., 0]))
+    print(
+        "ESS hlr", blackjax.diagnostics.effective_sample_size(samples_["hlr"][..., 0])
+    )
+    print(
+        "ESS flux", blackjax.diagnostics.effective_sample_size(samples_["flux"][..., 0])
+    )
+    print("ESS e1", blackjax.diagnostics.effective_sample_size(samples_["e1"][..., 0]))
+    print("ESS e2", blackjax.diagnostics.effective_sample_size(samples_["e2"][..., 0]))
     print("ESS at the end of first loop", file=log_file)
-    print("ESS g1", blackjax.diagnostics.effective_sample_size(samples_["g1"][...,0]), file=log_file)
-    print("ESS g2", blackjax.diagnostics.effective_sample_size(samples_["g2"][...,0]), file=log_file)
-    print("ESS hlr", blackjax.diagnostics.effective_sample_size(samples_["hlr"][...,0]), file=log_file)
-    print("ESS flux", blackjax.diagnostics.effective_sample_size(samples_["flux"][...,0]), file=log_file)
-    print("ESS e1", blackjax.diagnostics.effective_sample_size(samples_["e1"][...,0]), file=log_file)
-    print("ESS e2", blackjax.diagnostics.effective_sample_size(samples_["e2"][...,0]), file=log_file)
+    print(
+        "ESS g1",
+        blackjax.diagnostics.effective_sample_size(samples_["g1"][..., 0]),
+        file=log_file,
+    )
+    print(
+        "ESS g2",
+        blackjax.diagnostics.effective_sample_size(samples_["g2"][..., 0]),
+        file=log_file,
+    )
+    print(
+        "ESS hlr",
+        blackjax.diagnostics.effective_sample_size(samples_["hlr"][..., 0]),
+        file=log_file,
+    )
+    print(
+        "ESS flux",
+        blackjax.diagnostics.effective_sample_size(samples_["flux"][..., 0]),
+        file=log_file,
+    )
+    print(
+        "ESS e1",
+        blackjax.diagnostics.effective_sample_size(samples_["e1"][..., 0]),
+        file=log_file,
+    )
+    print(
+        "ESS e2",
+        blackjax.diagnostics.effective_sample_size(samples_["e2"][..., 0]),
+        file=log_file,
+    )
 
     # extra chains
     for i in range(args.num):
-        print("Extra chain", args.num+i+1, "of", 2*args.num, "running...")
-        last_states, (samples, info) = jax.vmap(lambda init_states, keys: run_hmc(init_states, keys, args.num_steps))(last_states, keys[:,i,:])
+        print("Extra chain", args.num + i + 1, "of", 2 * args.num, "running...")
+        last_states, (samples, info) = jax.vmap(
+            lambda init_states, keys: run_hmc(init_states, keys, args.num_steps)
+        )(last_states, keys[:, i, :])
         sample_list.append(samples)
 
     # concatenates chains
-    samples_ = {key: np.concatenate([sample_list[k].position[key] for k in range(args.num*2)], 1) for key in last_states.position}
+    samples_ = {
+        key: np.concatenate(
+            [sample_list[k].position[key] for k in range(args.num * 2)], 1
+        )
+        for key in last_states.position
+    }
 
     # labels = ["hlr", "flux", "r_ell", "angle_ell", "g1", "g2"]
     labels = ["hlr", "flux", "e1", "e2", "g1", "g2"]
@@ -415,12 +587,12 @@ def main():
             #     ax.plot(samples_[label][k,:,0]*0.1, "k", alpha=0.3)
             # else:
             #     ax.plot(samples_[label][k,:,0], "k", alpha=0.3)
-            ax.plot(samples_[label][k,:,0], "k", alpha=0.3)
-        ax.set_xlim(0, args.num_steps*args.num*2)
+            ax.plot(samples_[label][k, :, 0], "k", alpha=0.3)
+        ax.set_xlim(0, args.num_steps * args.num * 2)
         ax.set_ylabel(label)
         ax.yaxis.set_label_coords(-0.1, 0.5)
     axes[-1].set_xlabel("step number")
-    plt.savefig("../outputs/radio_chains.pdf")
+    plt.savefig(os.path.join(out_dir, "radio_chains.pdf"))
 
     fig, axes = plt.subplots(len(labels), figsize=(10, 7), sharex=True)
     for i, label in enumerate(labels):
@@ -428,13 +600,31 @@ def main():
         for k in range(args.num_chains):
             if label == "hlr":
                 # hlr -> jax.nn.softplus(hlr + hlr_offset) * hlr_scale + hlr_min
-                ax.plot(jax.nn.sigmoid(samples_["hlr"][k,:,0]/args.hlr_prior_sigma)*(args.hlr_prior_max - args.hlr_prior_min) + args.hlr_prior_min, "k", alpha=0.3)
+                ax.plot(
+                    jax.nn.sigmoid(samples_["hlr"][k, :, 0] / args.hlr_prior_sigma)
+                    * (args.hlr_prior_max - args.hlr_prior_min)
+                    + args.hlr_prior_min,
+                    "k",
+                    alpha=0.3,
+                )
             if label == "flux":
                 # flux -> jax.nn.softplus(flux + flux_offset) * flux_scale + flux_min
-                ax.plot(jax.nn.sigmoid(samples_["flux"][k,:,0]/args.flux_prior_sigma)*(args.flux_prior_max - args.flux_prior_min) + args.flux_prior_min, "k", alpha=0.3)
+                ax.plot(
+                    jax.nn.sigmoid(samples_["flux"][k, :, 0] / args.flux_prior_sigma)
+                    * (args.flux_prior_max - args.flux_prior_min)
+                    + args.flux_prior_min,
+                    "k",
+                    alpha=0.3,
+                )
             if label in ["e1", "e2"]:
                 #  e1, e2 -> to_unit_disk
-                e = jnp.stack([samples_["e1"][k,:,0]/args.ell_sigma * args.ell_scale, samples_["e2"][k,:,0]/args.ell_sigma * args.ell_scale], 0)
+                e = jnp.stack(
+                    [
+                        samples_["e1"][k, :, 0] / args.ell_sigma * args.ell_scale,
+                        samples_["e2"][k, :, 0] / args.ell_sigma * args.ell_scale,
+                    ],
+                    0,
+                )
                 e = to_unit_disk(e)
                 if label == "e1":
                     ax.plot(e[0], "k", alpha=0.3)
@@ -442,7 +632,13 @@ def main():
                     ax.plot(e[1], "k", alpha=0.3)
             if label in ["g1", "g2"]:
                 # g1, g2 -> to_unit_disk
-                g = jnp.stack([samples_["g1"][k,:,0]/args.g_sigma * args.g_scale, samples_["g2"][k,:,0]/args.g_sigma * args.g_scale], 0)
+                g = jnp.stack(
+                    [
+                        samples_["g1"][k, :, 0] / args.g_sigma * args.g_scale,
+                        samples_["g2"][k, :, 0] / args.g_sigma * args.g_scale,
+                    ],
+                    0,
+                )
                 g = to_unit_disk(g)
                 if label == "g1":
                     ax.plot(g[0], "k", alpha=0.3)
@@ -451,40 +647,66 @@ def main():
             else:
                 pass
 
-        ax.set_xlim(0, args.num_steps*args.num*2)
+        ax.set_xlim(0, args.num_steps * args.num * 2)
         ax.set_ylabel(label)
         ax.yaxis.set_label_coords(-0.1, 0.5)
     axes[-1].set_xlabel("step number")
-    plt.savefig("../outputs/radio_chains_scaled.pdf")
+    plt.savefig(os.path.join(out_dir, "radio_chains_scaled.pdf"))
 
     two_truths = np.array([args.g1_true, args.g2_true])
-    samples_g = np.concatenate([samples_["g1"], samples_["g2"]], -1).reshape((-1,2)) * (args.g_scale/args.g_sigma)
+    samples_g = np.concatenate([samples_["g1"], samples_["g2"]], -1).reshape(
+        (-1, 2)
+    ) * (args.g_scale / args.g_sigma)
 
     two_cols = ["g_1", "g_2"]
     two_labels = [r"$\gamma_1$", r"$\gamma_2$"]
 
     fig = plt.figure(figsize=(7, 7))
-    fig = corner.corner(samples_g,
-                truths=two_truths,
-                labels=two_labels,
-                fig=fig
-                );
-    fig.savefig("../outputs/radio_corner_g.pdf")
+    fig = corner.corner(samples_g, truths=two_truths, labels=two_labels, fig=fig)
+    fig.savefig(os.path.join(out_dir, "radio_corner_g.pdf"))
     plt.close()
 
-    print("ESS g1", blackjax.diagnostics.effective_sample_size(samples_["g1"][...,0]))
-    print("ESS g2", blackjax.diagnostics.effective_sample_size(samples_["g2"][...,0]))
-    print("ESS hlr", blackjax.diagnostics.effective_sample_size(samples_["hlr"][...,0]))
-    print("ESS flux", blackjax.diagnostics.effective_sample_size(samples_["flux"][...,0]))
-    print("ESS e1", blackjax.diagnostics.effective_sample_size(samples_["e1"][...,0]))
-    print("ESS e2", blackjax.diagnostics.effective_sample_size(samples_["e2"][...,0]))
+    print("ESS g1", blackjax.diagnostics.effective_sample_size(samples_["g1"][..., 0]))
+    print("ESS g2", blackjax.diagnostics.effective_sample_size(samples_["g2"][..., 0]))
+    print(
+        "ESS hlr", blackjax.diagnostics.effective_sample_size(samples_["hlr"][..., 0])
+    )
+    print(
+        "ESS flux", blackjax.diagnostics.effective_sample_size(samples_["flux"][..., 0])
+    )
+    print("ESS e1", blackjax.diagnostics.effective_sample_size(samples_["e1"][..., 0]))
+    print("ESS e2", blackjax.diagnostics.effective_sample_size(samples_["e2"][..., 0]))
     print("ESS at the end of second loop", file=log_file)
-    print("ESS g1", blackjax.diagnostics.effective_sample_size(samples_["g1"][...,0]), file=log_file)
-    print("ESS g2", blackjax.diagnostics.effective_sample_size(samples_["g2"][...,0]), file=log_file)
-    print("ESS hlr", blackjax.diagnostics.effective_sample_size(samples_["hlr"][...,0]), file=log_file)
-    print("ESS flux", blackjax.diagnostics.effective_sample_size(samples_["flux"][...,0]), file=log_file)
-    print("ESS e1", blackjax.diagnostics.effective_sample_size(samples_["e1"][...,0]), file=log_file)
-    print("ESS e2", blackjax.diagnostics.effective_sample_size(samples_["e2"][...,0]), file=log_file)
+    print(
+        "ESS g1",
+        blackjax.diagnostics.effective_sample_size(samples_["g1"][..., 0]),
+        file=log_file,
+    )
+    print(
+        "ESS g2",
+        blackjax.diagnostics.effective_sample_size(samples_["g2"][..., 0]),
+        file=log_file,
+    )
+    print(
+        "ESS hlr",
+        blackjax.diagnostics.effective_sample_size(samples_["hlr"][..., 0]),
+        file=log_file,
+    )
+    print(
+        "ESS flux",
+        blackjax.diagnostics.effective_sample_size(samples_["flux"][..., 0]),
+        file=log_file,
+    )
+    print(
+        "ESS e1",
+        blackjax.diagnostics.effective_sample_size(samples_["e1"][..., 0]),
+        file=log_file,
+    )
+    print(
+        "ESS e2",
+        blackjax.diagnostics.effective_sample_size(samples_["e2"][..., 0]),
+        file=log_file,
+    )
 
     flatchain = np.std(samples_["g1"], axis=1) < 1e-4
     print("Flatchains:")
@@ -496,7 +718,16 @@ def main():
     if args.save_samples:
         print(args.save_samples)
         print("Saving samples...")
-        np.savez("../outputs/radio_samples.npz", **samples_)
+        np.savez(os.path.join(out_dir, "radio_samples.npz"), **samples_)
+
+    # Print arguments
+    print("Arguments:", file=log_file)
+    for key, value in vars(args).items():
+        print(f"  {key}: {value}", file=log_file)
+
+    # Save the arguments
+    with open(os.path.join(out_dir, "args.json"), "w") as f:
+        json.dump(vars(args), f, indent=4)
 
     # Save log file
     log_file.close()
