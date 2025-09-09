@@ -21,10 +21,16 @@ warnings.filterwarnings('ignore')
 import jax_galsim as galsim
 import galsim as gs
 
-from psf_utils import compute_radio_uv_mask
-from model_utils import model_fn
-from data_gen_utils import gen_sersic_profile
-from func_utils import stack_2_complex, to_unit_disk
+import sys
+import os
+
+# Add project root to sys.path
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+
+from src.shearest.psf_utils import compute_radio_uv_mask
+from src.shearest.model_utils import model_fn
+from src.shearest.data_gen_utils import gen_sersic_profile
+from src.shearest.func_utils import stack_2_complex, to_unit_disk
 
 import corner
 
@@ -95,9 +101,9 @@ def main():
     parser.add_argument('--g1_true', type=float, default=-0.05, help='True g1 shear value')
     parser.add_argument('--g2_true', type=float, default=0.05, help='True g2 shear value')
     parser.add_argument('--ell_sigma', type=float, default=1., help='Ellipticity prior sigma')
-    parser.add_argument('--ell_scale', type=float, default=0.3, help='Ellipticity prior scale')
+    parser.add_argument('--ell_scale', type=float, default=0.2, help='Ellipticity prior scale')
     parser.add_argument('--g_sigma', type=float, default=1.0, help='Shear prior sigma')
-    parser.add_argument('--g_scale', type=float, default=0.3, help='Shear prior scale')
+    parser.add_argument('--g_scale', type=float, default=0.1, help='Shear prior scale')
     parser.add_argument('--sersic_index', type=float, default=1.0, help='Sersic index')
     parser.add_argument('--n_antenna', type=int, default=50, help='Number of antennas')
     parser.add_argument('--E_lim', type=float, default=50e3, help='East limit')
@@ -109,18 +115,18 @@ def main():
     parser.add_argument('--n_freqs', type=int, default=4, help='Number of frequency channels')
     parser.add_argument('--radio_array_seed', type=int, default=123, help='Random seed for the radio array generation')
     parser.add_argument('--ell_prior_sigma', type=float, default=1.0, help='Ellipticity prior sigma')
-    parser.add_argument('--ell_prior_scale', type=float, default=0.3, help='Ellipticity prior scale')
+    parser.add_argument('--ell_prior_scale', type=float, default=0.2, help='Ellipticity prior scale')
     parser.add_argument('--g_prior_sigma', type=float, default=1.0, help='Shear prior sigma')
-    parser.add_argument('--g_prior_scale', type=float, default=0.3, help='Shear prior scale')
+    parser.add_argument('--g_prior_scale', type=float, default=0.1, help='Shear prior scale')
     parser.add_argument('--hlr_prior_sigma', type=float, default=1.0, help='Half-light radius prior sigma')
     parser.add_argument('--hlr_prior_min', type=float, default=0.1, help='Half-light radius prior min')
     parser.add_argument('--hlr_prior_max', type=float, default=3.0, help='Half-light radius prior max')
     parser.add_argument('--flux_prior_sigma', type=float, default=1.0, help='Flux prior sigma')
     parser.add_argument('--flux_prior_min', type=float, default=0.03, help='Flux prior min')
     parser.add_argument('--flux_prior_max', type=float, default=0.25, help='Flux prior max')
-    parser.add_argument('--lr_map', type=float, default=3e-3, help='MAP learning rate')
+    parser.add_argument('--lr_map', type=float, default=1e-2, help='MAP learning rate')
     parser.add_argument('--n_steps_map', type=int, default=5000, help='Number of steps for MAP')
-    parser.add_argument('--n_warmup', type=int, default=500, help='Number of warmup steps for MEADS')
+    parser.add_argument('--n_warmup', type=int, default=5000, help='Number of warmup steps for MEADS')
     parser.add_argument('--num_chains', type=int, default=10, help='Number of chains for HMC')
     parser.add_argument('--step_size', type=float, default=0.005, help='Step size for HMC')
     parser.add_argument('--num', type=int, default=20, help='Number of batch iterations')
