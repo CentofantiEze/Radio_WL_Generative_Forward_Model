@@ -176,7 +176,7 @@ def main():
         "--num_chains", type=int, default=10, help="Number of chains for HMC"
     )
     parser.add_argument(
-        "--step_size", type=float, default=0.005, help="Step size for HMC"
+        "--step_size", type=float, default=None, help="Step size for HMC"
     )
     parser.add_argument(
         "--num", type=int, default=20, help="Number of batch iterations"
@@ -464,9 +464,10 @@ def main():
 
     print("Step size:", parameters["step_size"])
     print(f"Step size: {parameters['step_size']}", file=log_file)
-    parameters["step_size"] = args.step_size
-    print("Set step size to:", parameters["step_size"])
-    print(f"Set step size to: {parameters['step_size']}", file=log_file)
+    if args.step_size is not None:
+        parameters["step_size"] = args.step_size
+        print("Set step size to:", parameters["step_size"])
+        print(f"Set step size to: {parameters['step_size']}", file=log_file)
     print(parameters.keys(), file=log_file)
     print(parameters, file=log_file)
     np.save(
