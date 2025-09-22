@@ -584,7 +584,6 @@ def main():
 
     # labels = ["hlr", "flux", "r_ell", "angle_ell", "g1", "g2"]
     labels = ["hlr", "flux", "e1", "e2", "g1", "g2"]
-    params_scales = np.load(args.params_dir, allow_pickle=True)[()]
 
     fig, axes = plt.subplots(len(labels), figsize=(10, 7), sharex=True)
     for i, label in enumerate(labels):
