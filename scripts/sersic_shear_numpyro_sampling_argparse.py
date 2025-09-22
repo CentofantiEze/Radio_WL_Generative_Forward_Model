@@ -27,6 +27,7 @@ import argparse
 from argparse import Namespace
 
 import corner
+
 from src.shearest.data_gen_utils import gen_sersic_profile
 from src.shearest.func_utils import stack_2_complex, to_unit_disk
 from src.shearest.model_utils import model_fn
@@ -96,10 +97,16 @@ def main():
     )
     parser.add_argument("--noise_uv", type=float, default=0.004, help="UV noise level")
     parser.add_argument(
-        "--params_dir",
+        "--trecs_data_path",
         type=str,
-        default="../data/trecs_gal_params.npy",
-        help="Directory for galaxy hlr and flux parameter fit",
+        default=None,
+        help="Galaxy, hlr and flux fit over the TRECS catalog (trecs_gal_params.npy)",
+    )
+    parser.add_argument(
+        "--deepshape_data_path",
+        type=str,
+        default=None,
+        help="Path to the DeepShape dataset (val_set_rivi.h5)",
     )
     parser.add_argument(
         "--g1_true", type=float, default=-0.05, help="True g1 shear value"
@@ -288,23 +295,23 @@ def main():
         pixel_scale=args.pixel_scale,
         uv_pos=uv_pos,
         noise_uv=args.noise_uv,
-        params_dir=args.params_dir,
-        ell_sigma=args.ell_sigma,
+        TRECS_fit_dir=args.trecs_data_path,
+        deepshape_dataset_dir=args.deepshape_data_path,
         ell_scale=args.ell_scale,
-        g_sigma=args.g_sigma,
-        g_scale=args.g_scale,
+        g1=args.g1_true,
+        g2=args.g2_true,
         n=args.sersic_index,
     )
     seeded_model_data_gen = seed(model_data_gen, key)
     # Conditioning model to generate observation with [g1, g2]
-    conditionned_model = condition(
-        seeded_model_data_gen,
-        {
-            "g1": args.g1_true * jnp.ones((1,)) / (args.g_scale / args.g_sigma),
-            "g2": args.g2_true * jnp.ones((1,)) / (args.g_scale / args.g_sigma),
-        },
-    )
-    data, data_params = conditionned_model()
+    # conditionned_model = condition(
+    #     seeded_model_data_gen,
+    #     {
+    #         "g1": args.g1_true * jnp.ones((1,)) / (args.g_scale / args.g_sigma),
+    #         "g2": args.g2_true * jnp.ones((1,)) / (args.g_scale / args.g_sigma),
+    #     },
+    # )
+    data, data_params = seeded_model_data_gen()
 
     # Save the data
     np.save(os.path.join(out_dir, "radio_data.npy"), data)
