@@ -6,7 +6,7 @@ import numpy as np
 import numpyro
 import numpyro.distributions as dist
 
-from .data_gen_utils import draw_exp_profile
+from .data_gen_utils import draw_exp_profile, draw_spergel_profile
 from .func_utils import to_unit_disk
 
 
@@ -28,9 +28,17 @@ def model_fn(
     flux_sigma=None,
     flux_max=None,
     flux_min=None,
+    profile_type="exp",
 ):
 
     u = jnp.ones((Ngal,))  # sampling galaxies all at once
+
+    # Spergel profile 
+    if profile_type == "spergel":
+        nu_min = -0.7  # Safety limit (to avoid nu < -1)
+        nu_max = 1.0  # Max limit (to avoid numerical issues at high nu)
+        nu_z = numpyro.sample("nu", dist.Normal(0.0 * u, 1.0 * u))
+        nu = nu_min + jax.nn.sigmoid(nu_z) * (nu_max - nu_min)
 
     # hlr
     # hlr = jax.nn.softplus((numpyro.sample("hlr", dist.Normal(0.*u, hlr_sigma*u))/hlr_sigma + hlr_offset)) * hlr_scale + hlr_min
@@ -72,15 +80,30 @@ def model_fn(
 
     g = jnp.repeat(jnp.stack([g1, g2], 0), Ngal, -1)
     g = to_unit_disk(g)
-
-    draw = partial(draw_exp_profile, uv_pos=uv_pos, Npx=Npx, pixel_scale=pixel_scale)
-    im_gal = jax.vmap(draw)(
-        hlr=hlr,
-        flux=flux,
-        e1=e[0],
-        e2=e[1],
-        g1=g[0],
-        g2=g[1],
-    )
-
+    if profile_type == "exp":
+        draw = partial(draw_exp_profile, uv_pos=uv_pos, Npx=Npx, pixel_scale=pixel_scale)
+        im_gal = jax.vmap(draw)(
+            hlr=hlr,
+            flux=flux,
+            e1=e[0],
+            e2=e[1],
+            g1=g[0],
+            g2=g[1],
+        )
+    elif profile_type == "sersic":
+        raise NotImplementedError("Sersic profile not implemented in JAX-Galsim yet.")
+    elif profile_type == "spergel":
+        draw = partial(draw_spergel_profile, uv_pos=uv_pos, Npx=Npx, pixel_scale=pixel_scale)
+        im_gal = jax.vmap(draw)(
+            nu=nu,
+            hlr=hlr,
+            flux=flux,
+            e1=e[0],
+            e2=e[1],
+            g1=g[0],
+            g2=g[1],
+        )
+    else:
+        raise ValueError("Profile type not recognized.")
+   
     return numpyro.sample("obs", dist.Normal(im_gal, noise_uv), obs=obs)

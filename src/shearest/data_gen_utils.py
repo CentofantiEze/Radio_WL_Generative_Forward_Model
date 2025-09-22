@@ -53,6 +53,26 @@ def draw_sersic_profile(n, hlr, flux, e1, e2, g1, g2, uv_pos, Npx, pixel_scale):
 
     return complex_2_stack(vis)
 
+def draw_spergel_profile(nu, hlr, flux, e1, e2, g1, g2, uv_pos, Npx, pixel_scale):
+    gal = galsim.Spergel(nu=nu, half_light_radius=hlr, flux=flux)
+
+    # intrinsic ellipticity
+    gal = gal.shear(e1=e1, e2=e2)
+
+    # cosmic shear
+    gal = gal.shear(g1=g1, g2=g2)
+
+    # Convert to Fourier space
+    gal_kimage = gal.drawKImage(nx=Npx, ny=Npx, scale=2 * np.pi / (Npx * pixel_scale))
+
+    # Get array
+    gal_kimage = gal_kimage.array
+
+    # Sample the visibilities
+    vis = gal_kimage[uv_pos]
+
+    return complex_2_stack(vis)
+
 
 def sample_sersic_params(
     Ngal=None, TRECS_fit_dir=None, ell_scale=None, n=1.0, deepshape_dataset_dir=None
