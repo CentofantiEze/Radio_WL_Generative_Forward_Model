@@ -24,45 +24,49 @@ set -x
 
 cd ${WORK}/repos/Radio_WL_Generative_Forward_Model/scripts
 
-srun python sersic_shear_numpyro_sampling_argparse.py \
-    --Ngal 100 \
-    --Npx 128 \
-    --pixel_scale 0.15 \
-    --noise_uv 0.004 \
-    # --trecs_data_path ../data/trecs_gal_params.npy \
-    --deepshape_data_path ../data/val_set_rivi.h5 \
-    --g1_true -0.05 \
-    --g2_true 0.05 \
-    --ell_sigma 1.0 \
-    --ell_scale 0.2 \
-    --g_sigma 1.0 \
-    --g_scale 0.1 \
-    --sersic_index 1.0 \
-    --n_antenna 50 \
-    --E_lim 50e3 \
-    --N_lim 50e3 \
-    --track_time 10 \
-    --n_times 4 \
-    --f 1.4e9 \
-    --df 1e8 \
-    --n_freqs 4 \
-    --radio_array_seed 123 \
-    --ell_prior_sigma 1.0 \
-    --ell_prior_scale 0.2 \
-    --g_prior_sigma 1.0 \
-    --g_prior_scale 0.1 \
-    --hlr_prior_sigma 1.0 \
-    --hlr_prior_min 0.1 \
-    --hlr_prior_max 3.0 \
-    --flux_prior_sigma 1.0 \
-    --flux_prior_min 0.03 \
-    --flux_prior_max 0.25 \
-    --lr_map 5e-3 \
-    --n_steps_map 5000 \
-    --n_warmup 50 \
-    --num_chains 10 \
-    --step_size 0.005 \
-    --num 20 \
-    --num_steps 10000 \
-    --id test \
+args = (
+    --Ngal 100
+    --Npx 128
+    --pixel_scale 0.15
+    --noise_uv 0.004 
+    # --trecs_data_path ../data/trecs_gal_params.npy 
+    --deepshape_data_path ../data/val_set_rivi.h5 
+    --g1_true -0.05 
+    --g2_true 0.05 
+    --ell_sigma 1.0 
+    --ell_scale 0.2 
+    --g_sigma 1.0 
+    --g_scale 0.1 
+    --sersic_index 1.0 
+    --n_antenna 50 
+    --E_lim 50e3 
+    --N_lim 50e3 
+    --track_time 10 
+    --n_times 4 
+    --f 1.4e9 
+    --df 1e8 
+    --n_freqs 4 
+    --radio_array_seed 123 
+    --ell_prior_sigma 1.0 
+    --ell_prior_scale 0.2 
+    --g_prior_sigma 1.0 
+    --g_prior_scale 0.1 
+    --hlr_prior_sigma 1.0 
+    --hlr_prior_min 0.1 
+    --hlr_prior_max 3.0 
+    --flux_prior_sigma 1.0 
+    --flux_prior_min 0.03 
+    --flux_prior_max 0.25 
+    --lr_map 5e-3 
+    --n_steps_map 5000 
+    --n_warmup 50 
+    --num_chains 10 
+    --step_size 0.005 
+    --num 20 
+    --num_steps 10000 
+    --id test 
     --output_dir /lustre/fswork/projects/rech/prk/uds36vp/repos/Radio_WL_Generative_Forward_Model/outputs
+)
+
+srun python sersic_shear_numpyro_sampling_argparse.py "${args[@]}"
+  
