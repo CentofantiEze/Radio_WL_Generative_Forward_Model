@@ -24,7 +24,7 @@ set -x
 
 cd ${WORK}/repos/Radio_WL_Generative_Forward_Model/scripts
 
-args = (
+args=(
     --Ngal 100
     --Npx 128
     --pixel_scale 0.15
