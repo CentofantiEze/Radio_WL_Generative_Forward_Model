@@ -116,7 +116,7 @@ def sample_sersic_params(
             data = {col: f[col][:] for col in columns}
         # Load parameters
         hlr = data["HLR"][:Ngal]
-        flux = data["Flux"][:Ngal]
+        flux = data["Flux"][:Ngal] * 1e3  # mJy to uJy
         e = np.array(data["input"][:Ngal]).T  # shape (Ngal, 2) -> (2, Ngal)
         n = data["Sersic_index"][:Ngal]
     else:
