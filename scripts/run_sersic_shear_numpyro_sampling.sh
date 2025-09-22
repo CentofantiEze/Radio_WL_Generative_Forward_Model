@@ -47,6 +47,7 @@ args=(
     --df 1e8 
     --n_freqs 4 
     --radio_array_seed 123 
+    --model_profile exp
     --ell_prior_sigma 1.0 
     --ell_prior_scale 0.2 
     --g_prior_sigma 1.0 

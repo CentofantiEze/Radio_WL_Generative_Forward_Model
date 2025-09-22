@@ -139,6 +139,7 @@ def main():
         default=123,
         help="Random seed for the radio array generation",
     )
+    parser.add_argument("--model_profile", type=str, default="exp", help="Model profile type: exp or spergel")
     parser.add_argument(
         "--ell_prior_sigma", type=float, default=1.0, help="Ellipticity prior sigma"
     )
@@ -338,6 +339,7 @@ def main():
         flux_sigma=args.flux_prior_sigma,
         flux_max=args.flux_prior_max,
         flux_min=args.flux_prior_min,
+        profile_type=args.model_profile,
     )
     # seeded_model = seed(model, subkey)
 
