@@ -97,7 +97,7 @@ def sample_sersic_params(
         # Load parameters
         hlr = data["HLR"][:Ngal]
         flux = data["Flux"][:Ngal]
-        e = data["input"][:Ngal]
+        e = np.array(data["input"][:Ngal]).T  # shape (Ngal, 2) -> (2, Ngal)
         n = data["Sersic_index"][:Ngal]
     else:
         raise ValueError("Either TRECS_fit_dir or deepshape_dataset_dir must be provided.")
