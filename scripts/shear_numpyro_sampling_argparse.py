@@ -347,13 +347,13 @@ def main():
     )
     # seeded_model = seed(model, subkey)
 
-    # Plot observations
+    # Plot 100 observations
     data_complex = []
     for vis in stack_2_complex(data, batch=True):
         img_aux = np.zeros_like(mask)
         img_aux[uv_pos] = vis
         data_complex.append(img_aux)
-    data_ = rearrange(data_complex, "(n1 n2) h w -> (n1 h) (n2 w)", n1=10, n2=10)
+    data_ = rearrange(data_complex[:100], "(n1 n2) h w -> (n1 h) (n2 w)", n1=10, n2=10)
     plt.figure(figsize=(10, 10))
     plt.imshow(np.abs(data_), vmin=np.min(np.abs(data_)), vmax=np.max(np.abs(data_)))
     print("Data shape:", data_.shape)
