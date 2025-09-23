@@ -29,15 +29,16 @@ args=(
     --Npx 128
     --pixel_scale 0.15
     --noise_uv 0.004 
-    # --trecs_data_path ../data/trecs_gal_params.npy 
-    --deepshape_data_path ../data/val_set_rivi.h5 
+    --trecs_data_path ../data/trecs_gal_params.npy 
+    # --deepshape_data_path ../data/val_set_rivi.h5 
+    --data_profile spergel
+    # --sersic_index 1.0 
     --g1_true -0.05 
     --g2_true 0.05 
     --ell_sigma 1.0 
     --ell_scale 0.2 
     --g_sigma 1.0 
     --g_scale 0.1 
-    --sersic_index 1.0 
     --n_antenna 50 
     --E_lim 50e3 
     --N_lim 50e3 

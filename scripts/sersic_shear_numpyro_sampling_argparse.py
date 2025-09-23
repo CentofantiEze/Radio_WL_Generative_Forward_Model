@@ -28,7 +28,7 @@ from argparse import Namespace
 
 import corner
 
-from src.shearest.data_gen_utils import gen_sersic_profile
+from src.shearest.data_gen_utils import gen_gal_dataset
 from src.shearest.func_utils import stack_2_complex, to_unit_disk
 from src.shearest.model_utils import model_fn
 from src.shearest.psf_utils import compute_radio_uv_mask
@@ -107,6 +107,9 @@ def main():
         type=str,
         default=None,
         help="Path to the DeepShape dataset (val_set_rivi.h5)",
+    )
+    parser.add_argument(
+        "--data_profile", type=str, default="exp", help="Galaxy dataset profile type: exp, sersic or spergel"
     )
     parser.add_argument(
         "--g1_true", type=float, default=-0.05, help="True g1 shear value"
@@ -290,7 +293,7 @@ def main():
 
     # Generate observations
     model_data_gen = partial(
-        gen_sersic_profile,
+        gen_gal_dataset,
         Ngal=args.Ngal,
         Npx=args.Npx,
         pixel_scale=args.pixel_scale,
@@ -301,7 +304,8 @@ def main():
         ell_scale=args.ell_scale,
         g1=args.g1_true,
         g2=args.g2_true,
-        n=args.sersic_index,
+        profile_type=args.data_profile,
+        sersic_index=args.sersic_index,
     )
     seeded_model_data_gen = seed(model_data_gen, key)
     # Conditioning model to generate observation with [g1, g2]

@@ -2,6 +2,7 @@ from functools import partial
 
 import galsim as gs
 import h5py
+import jax
 import jax.numpy as jnp
 import jax_galsim as galsim
 import numpy as np
@@ -74,8 +75,8 @@ def draw_spergel_profile(nu, hlr, flux, e1, e2, g1, g2, uv_pos, Npx, pixel_scale
     return complex_2_stack(vis)
 
 
-def sample_sersic_params(
-    Ngal=None, TRECS_fit_dir=None, ell_scale=None, n=1.0, deepshape_dataset_dir=None
+def sample_galaxy_params(
+    Ngal=None, TRECS_fit_dir=None, ell_scale=None, deepshape_dataset_dir=None, profile_type=None, n=None
 ):
 
     if TRECS_fit_dir is not None:
@@ -106,8 +107,18 @@ def sample_sersic_params(
         # clipping undefined e and g values
         e = jnp.stack([e1, e2], 0)
         e = to_unit_disk(e)
-
-        n = jnp.ones((Ngal,)) * n  # Exponential profile, n=1
+        if n:
+            n = jnp.ones((Ngal,)) * n
+        elif profile_type == 'exp':
+            n = jnp.ones((Ngal,)) * 1.0  # Exponential profile, n=1.
+        elif profile_type == 'spergel':
+            nu_min = -0.7  # Safety limit (to avoid nu < -1)
+            nu_max = 1.0  # Max limit (to avoid numerical issues at high nu)
+            n = nu_min + jax.nn.sigmoid(numpyro.sample("n", dist.Normal(0.0 * u, 1.0 * u))) * (nu_max - nu_min)
+        elif profile_type == 'sersic':
+            n_min = 0.5  # Safety limit (to avoid nu < -1)
+            n_max = 4.0  # Max limit (to avoid numerical issues at high nu)
+            n = n_min + jax.nn.sigmoid(numpyro.sample("n", dist.Normal(0.0 * u, 1.0 * u))) * (n_max - n_min)
     elif deepshape_dataset_dir is not None:
         # Load the dataset
         with h5py.File(deepshape_dataset_dir, "r") as f:
@@ -125,7 +136,7 @@ def sample_sersic_params(
     return hlr, flux, e, n
 
 
-def gen_sersic_profile(
+def gen_gal_dataset(
     Ngal=None,
     Npx=None,
     pixel_scale=None,
@@ -136,30 +147,39 @@ def gen_sersic_profile(
     ell_scale=None,
     g1=None,
     g2=None,
-    n=1.0,
+    profile_type=None,
+    n=None,
 ):
 
-    hlr, flux, e, n = sample_sersic_params(
+    hlr_batch, flux_batch, e_batch, n_batch = sample_galaxy_params(
         Ngal=Ngal,
         TRECS_fit_dir=TRECS_fit_dir,
         ell_scale=ell_scale,
-        n=n,
         deepshape_dataset_dir=deepshape_dataset_dir,
+        profile_type=profile_type,
+        n=n,
     )
 
     u = jnp.ones((Ngal,))  # Sheared shear for all galaxies
     g_1 = u * g1
     g_2 = u * g2
     # generate galaxy image
-    draw = partial(draw_sersic_profile, uv_pos=uv_pos, Npx=Npx, pixel_scale=pixel_scale)
+    if profile_type == "exp" or profile_type == "serscic":
+        draw = partial(draw_sersic_profile, uv_pos=uv_pos, Npx=Npx, pixel_scale=pixel_scale)
+    elif profile_type == "spergel":
+        if deepshape_dataset_dir is not None:
+            raise ValueError("Spergel profile not available for DeepShape dataset.")
+        draw = partial(draw_spergel_profile, uv_pos=uv_pos, Npx=Npx, pixel_scale=pixel_scale)
+    else:
+        raise ValueError("Profile type not recognized.")
     im_gal = jnp.array(
         [
             draw(
-                n=n[i],
-                hlr=hlr[i],
-                flux=flux[i],
-                e1=e[0][i],
-                e2=e[1][i],
+                n=n_batch[i],
+                hlr=hlr_batch[i],
+                flux=flux_batch[i],
+                e1=e_batch[0][i],
+                e2=e_batch[1][i],
                 g1=g_1[i],
                 g2=g_2[i],
             )
@@ -167,11 +187,11 @@ def gen_sersic_profile(
         ]
     )
     data_params = {
-        "n": n,
-        "hlr": hlr,
-        "flux": flux,
-        "e1": e[0],
-        "e2": e[1],
+        "n": n_batch,
+        "hlr": hlr_batch,
+        "flux": flux_batch,
+        "e1": e_batch[0],
+        "e2": e_batch[1],
         "g1": g_1,
         "g2": g_2,
     }
