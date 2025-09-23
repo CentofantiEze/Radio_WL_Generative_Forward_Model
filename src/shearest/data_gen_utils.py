@@ -54,8 +54,8 @@ def draw_sersic_profile(n, hlr, flux, e1, e2, g1, g2, uv_pos, Npx, pixel_scale):
 
     return complex_2_stack(vis)
 
-def draw_spergel_profile(nu, hlr, flux, e1, e2, g1, g2, uv_pos, Npx, pixel_scale):
-    gal = galsim.Spergel(nu=nu, half_light_radius=hlr, flux=flux)
+def draw_spergel_profile(n, hlr, flux, e1, e2, g1, g2, uv_pos, Npx, pixel_scale):
+    gal = galsim.Spergel(nu=n, half_light_radius=hlr, flux=flux)
 
     # intrinsic ellipticity
     gal = gal.shear(e1=e1, e2=e2)
