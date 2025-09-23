@@ -305,7 +305,7 @@ def main():
         g1=args.g1_true,
         g2=args.g2_true,
         profile_type=args.data_profile,
-        sersic_index=args.sersic_index,
+        n=args.sersic_index,
     )
     seeded_model_data_gen = seed(model_data_gen, key)
     # Conditioning model to generate observation with [g1, g2]
