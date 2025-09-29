@@ -126,15 +126,19 @@ def main():
     parser.add_argument("--g_sigma", type=float, default=1.0, help="Shear prior sigma")
     parser.add_argument("--g_scale", type=float, default=0.1, help="Shear prior scale")
     parser.add_argument("--sersic_index", type=float, default=1.0, help="Sersic index")
+    parser.add_argument("--antenna_type", type=str, default="random", help="Antenna type: random or file")
+    parser.add_argument("--antenna_file", type=str, default=None, help="Path to antenna file if antenna_type is file")
+    parser.add_argument("--uv_mask_weighting", type=str, default="binary", help="UV weighting: binary or histogram")
     parser.add_argument("--n_antenna", type=int, default=50, help="Number of antennas")
     parser.add_argument("--E_lim", type=float, default=50e3, help="East limit")
     parser.add_argument("--N_lim", type=float, default=50e3, help="North limit")
     parser.add_argument("--track_time", type=float, default=10, help="Track time")
+    parser.add_argument("--t0", type=float, default=-4, help="Start time")
     parser.add_argument("--n_times", type=int, default=4, help="Number of times")
     parser.add_argument("--f", type=float, default=1.4e9, help="Frequency")
     parser.add_argument("--df", type=float, default=1e8, help="Frequency bandwidth")
     parser.add_argument(
-        "--n_freqs", type=int, default=4, help="Number of frequency channels"
+        "--n_freqs", type=int, default=1, help="Number of frequency channels"
     )
     parser.add_argument(
         "--radio_array_seed",
@@ -263,6 +267,9 @@ def main():
         df=args.df,
         n_freqs=args.n_freqs,
         seed=args.radio_array_seed,
+        antenna=args.antenna_type,
+        antenna_file=args.antenna_file,
+        uv_mask_weighting=args.uv_mask_weighting,
     )
 
     plt.subplots(1, 3, figsize=(12, 4))

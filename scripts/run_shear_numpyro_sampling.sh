@@ -38,15 +38,19 @@ args=(
     --ell_sigma 1.0 
     --ell_scale 0.2 
     --g_sigma 1.0 
-    --g_scale 0.1 
-    --n_antenna 50 
-    --E_lim 50e3 
-    --N_lim 50e3 
-    --track_time 10 
-    --n_times 4 
+    --g_scale 0.1
+    --antenna_type file
+    --antenna_file ../data/SKA-Mid.txt
+    --uv_mask_weighting histogram
+    # --n_antenna 50 
+    # --E_lim 50e3 
+    # --N_lim 50e3 
+    --track_time 8 
+    --n_times 96 
+    --t0 -4 
     --f 1.4e9 
     --df 1e8 
-    --n_freqs 4 
+    --n_freqs 1 
     --radio_array_seed 123 
     --model_profile exp
     --ell_prior_sigma 1.0 
@@ -59,14 +63,15 @@ args=(
     --flux_prior_sigma 1.0 
     --flux_prior_min 0.03 
     --flux_prior_max 0.25 
-    --lr_map 5e-3 
-    --n_steps_map 5000 
+    --lr_map 3e-3 
+    --n_steps_map 2500 
     --n_warmup 50 
     --num_chains 10 
-    --step_size 0.005 
+    # --step_size 0.005 
     --num 20 
-    --num_steps 10000 
-    --id test 
+    --num_steps 5000 
+    --id test_skamid 
+    --save_samples true 
     --output_dir /lustre/fswork/projects/rech/prk/uds36vp/repos/Radio_WL_Generative_Forward_Model/outputs
 )
 

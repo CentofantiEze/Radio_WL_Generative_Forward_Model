@@ -21,16 +21,25 @@ def compute_radio_uv_mask(
     df=1e8,
     n_freqs=4,
     seed=None,
+    antenna='random',
+    antenna_file=None,
+    uv_mask_weighting='binary'
 ):
-    antenna = argosim.antenna_utils.random_antenna_arr(
-        n_antenna=n_antenna, E_lim=E_lim, N_lim=N_lim, seed=seed
-    )
+    if antenna == 'random':
+        antenna = argosim.antenna_utils.random_antenna_arr(
+            n_antenna=n_antenna, E_lim=E_lim, N_lim=N_lim, seed=seed
+        )
+    elif antenna == 'file' and antenna_file is not None:
+        antenna = argosim.antenna_utils.load_antenna_enu_txt(antenna_file)
+    else:
+        raise ValueError("Invalid antenna configuration.")
+
     b_enu = argosim.antenna_utils.get_baselines(antenna)
     track, _ = argosim.antenna_utils.uv_track_multiband(
         b_ENU=b_enu, track_time=track_time, n_times=n_times, f=f, df=df, n_freqs=n_freqs
     )
     mask, _ = argosim.imaging_utils.grid_uv_samples(
-        track, sky_uv_shape=(Npx, Npx), fov_size=(fov_size, fov_size)
+        track, sky_uv_shape=(Npx, Npx), fov_size=(fov_size, fov_size), mask_type=uv_mask_weighting
     )
     uv_pos = np.where(np.abs(mask) > 0.0)
     psf = np.abs(argosim.imaging_utils.uv2sky(mask))
