@@ -74,6 +74,22 @@ def draw_spergel_profile(n, hlr, flux, e1, e2, g1, g2, uv_pos, Npx, pixel_scale)
 
     return complex_2_stack(vis)
 
+def draw_HST_profiles(Ngal, dataset_dir, flux_batch, g1, g2, uv_pos, Npx, pixel_scale_hst=0.03, sample="23.5"):
+
+    catalog = gs.COSMOSCatalog(sample=sample, dir=dataset_dir, min_flux=20., min_hlr=0.2, max_hlr=1.)
+    indices = np.random.choice(catalog.getNObjects(), Ngal, replace=False)
+    im_gal = []
+    for i, ind in enumerate(indices):
+        gal_real = catalog.makeGalaxy(ind)
+        # psf = gal_real.original_psf
+        # gal_real = gs.Convolve([gal_real, psf])
+        gal_real = gal_real.withFlux(flux_batch[i])
+        gal_real = gal_real.shear(g1=g1, g2=g2)
+        gal_kimage_real = gal_real.drawKImage(nx=Npx, ny=Npx, scale=2*np.pi/pixel_scale_hst/Npx).array
+        vis = gal_kimage_real[uv_pos]
+        im_gal.append(complex_2_stack(vis))
+    return jnp.array(im_gal), indices
+
 
 def sample_galaxy_params(
     Ngal=None, TRECS_fit_dir=None, ell_scale=None, deepshape_dataset_dir=None, profile_type=None, n=None
@@ -135,7 +151,6 @@ def sample_galaxy_params(
 
     return hlr, flux, e, n
 
-
 def gen_gal_dataset(
     Ngal=None,
     Npx=None,
@@ -144,6 +159,7 @@ def gen_gal_dataset(
     noise_uv=None,
     TRECS_fit_dir=None,
     deepshape_dataset_dir=None,
+    cosmos_dataset_dir=None,
     ell_scale=None,
     g1=None,
     g2=None,
@@ -164,37 +180,58 @@ def gen_gal_dataset(
     g_1 = u * g1
     g_2 = u * g2
     # generate galaxy image
-    if profile_type == "exp" or profile_type == "serscic":
-        draw = partial(draw_sersic_profile, uv_pos=uv_pos, Npx=Npx, pixel_scale=pixel_scale)
-    elif profile_type == "spergel":
-        if deepshape_dataset_dir is not None:
-            raise ValueError("Spergel profile not available for DeepShape dataset.")
-        draw = partial(draw_spergel_profile, uv_pos=uv_pos, Npx=Npx, pixel_scale=pixel_scale)
+    if profile_type == "real":
+        
+        im_gal, indices = draw_HST_profiles(
+            Ngal=Ngal, 
+            dataset_dir=cosmos_dataset_dir, 
+            flux=flux_batch, 
+            g1=g1, 
+            g2=g2, 
+            uv_pos=uv_pos, 
+            Npx=Npx, 
+            sample="23.5"
+        )
+        data_params = {
+            "profile_type": profile_type,
+            "indices": indices,
+            "flux": flux_batch,
+            "g1": g1,
+            "g2": g2,
+        }
     else:
-        raise ValueError("Profile type not recognized.")
-    im_gal = jnp.array(
-        [
-            draw(
-                n=n_batch[i],
-                hlr=hlr_batch[i],
-                flux=flux_batch[i],
-                e1=e_batch[0][i],
-                e2=e_batch[1][i],
-                g1=g_1[i],
-                g2=g_2[i],
-            )
-            for i in range(Ngal)
-        ]
-    )
-    data_params = {
-        "n": n_batch,
-        "hlr": hlr_batch,
-        "flux": flux_batch,
-        "e1": e_batch[0],
-        "e2": e_batch[1],
-        "g1": g_1,
-        "g2": g_2,
-    }
+        if profile_type == "exp" or profile_type == "sersic":
+            draw = partial(draw_sersic_profile, uv_pos=uv_pos, Npx=Npx, pixel_scale=pixel_scale)
+        elif profile_type == "spergel":
+            if deepshape_dataset_dir is not None:
+                raise ValueError("Spergel profile not available for DeepShape dataset.")
+            draw = partial(draw_spergel_profile, uv_pos=uv_pos, Npx=Npx, pixel_scale=pixel_scale)
+        else:
+            raise ValueError("Profile type not recognized.")
+        im_gal = jnp.array(
+            [
+                draw(
+                    n=n_batch[i],
+                    hlr=hlr_batch[i],
+                    flux=flux_batch[i],
+                    e1=e_batch[0][i],
+                    e2=e_batch[1][i],
+                    g1=g_1[i],
+                    g2=g_2[i],
+                )
+                for i in range(Ngal)
+            ]
+        )
+        data_params = {
+            "profile_type": profile_type,
+            "n": n_batch,
+            "hlr": hlr_batch,
+            "flux": flux_batch,
+            "e1": e_batch[0],
+            "e2": e_batch[1],
+            "g1": g_1,
+            "g2": g_2,
+        }
 
     # add Gaussian noise
     return numpyro.sample("obs", dist.Normal(im_gal, noise_uv)), data_params

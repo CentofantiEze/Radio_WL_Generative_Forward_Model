@@ -109,6 +109,12 @@ def main():
         help="Path to the DeepShape dataset (val_set_rivi.h5)",
     )
     parser.add_argument(
+        "--cosmos_data_path",
+        type=str,
+        default=None,
+        help="Path to the COSMOS dataset 23.5 (for real galaxy images)",
+    )
+    parser.add_argument(
         "--data_profile", type=str, default="exp", help="Galaxy dataset profile type: exp, sersic or spergel"
     )
     parser.add_argument(
@@ -308,6 +314,7 @@ def main():
         noise_uv=args.noise_uv,
         TRECS_fit_dir=args.trecs_data_path,
         deepshape_dataset_dir=args.deepshape_data_path,
+        cosmos_dataset_dir=args.cosmos_data_path,
         ell_scale=args.ell_scale,
         g1=args.g1_true,
         g2=args.g2_true,
