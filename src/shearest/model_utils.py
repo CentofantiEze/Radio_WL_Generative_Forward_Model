@@ -95,7 +95,7 @@ def model_fn(
     elif profile_type == "spergel":
         draw = partial(draw_spergel_profile, uv_pos=uv_pos, Npx=Npx, pixel_scale=pixel_scale)
         im_gal = jax.vmap(draw)(
-            nu=nu,
+            n=nu,
             hlr=hlr,
             flux=flux,
             e1=e[0],
