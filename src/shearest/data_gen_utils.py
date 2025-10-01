@@ -185,7 +185,7 @@ def gen_gal_dataset(
         im_gal, indices = draw_HST_profiles(
             Ngal=Ngal, 
             dataset_dir=cosmos_dataset_dir, 
-            flux=flux_batch, 
+            flux_batch=flux_batch, 
             g1=g1, 
             g2=g2, 
             uv_pos=uv_pos, 
