@@ -32,7 +32,7 @@ args=(
     --trecs_data_path ../data/trecs_gal_params.npy 
     # --deepshape_data_path ../data/val_set_rivi.h5
     --cosmos_data_path /lustre/fsn1/projects/rech/prk/uds36vp/datasets/COSMOS_23.5_training_sample
-    --data_profile spergel
+    --data_profile real
     # --sersic_index 1.0 
     --g1_true -0.05 
     --g2_true 0.05 
