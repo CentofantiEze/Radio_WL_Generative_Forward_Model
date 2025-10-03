@@ -71,7 +71,7 @@ args=(
     # --step_size 0.005 
     --num 20 
     --num_steps 5000 
-    --id cosmos 
+    --id cosmos_param 
     --save_samples true 
     --output_dir /lustre/fswork/projects/rech/prk/uds36vp/repos/Radio_WL_Generative_Forward_Model/outputs
 )
