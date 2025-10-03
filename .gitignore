@@ -213,3 +213,7 @@ __marimo__/
 
 # Mac
 .DS_Store
+
+# Files
+*.pdf
+*.json
