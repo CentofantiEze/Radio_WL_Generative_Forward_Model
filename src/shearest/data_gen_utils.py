@@ -74,19 +74,23 @@ def draw_spergel_profile(n, hlr, flux, e1, e2, g1, g2, uv_pos, Npx, pixel_scale)
 
     return complex_2_stack(vis)
 
-def draw_HST_profiles(Ngal, dataset_dir, flux_batch, g1, g2, uv_pos, Npx, pixel_scale_hst=0.03, sample="23.5"):
+def draw_HST_profiles(Ngal, dataset_dir, flux_batch, g1, g2, uv_pos, Npx, pixel_scale_hst=0.03, profile_type="real", sample="23.5"):
 
     catalog = gs.COSMOSCatalog(sample=sample, dir=dataset_dir, min_flux=20., min_hlr=0.2, max_hlr=1.)
     indices = np.random.choice(catalog.getNObjects(), Ngal, replace=False)
     im_gal = []
+    if profile_type == "cosmos":
+        gal_type = 'parametric'
+    else:
+        gal_type = 'real'
     for i, ind in enumerate(indices):
-        gal_real = catalog.makeGalaxy(ind)
-        # psf = gal_real.original_psf
-        # gal_real = gs.Convolve([gal_real, psf])
-        gal_real = gal_real.withFlux(flux_batch[i])
-        gal_real = gal_real.shear(g1=g1, g2=g2)
-        gal_kimage_real = gal_real.drawKImage(nx=Npx, ny=Npx, scale=2*np.pi/pixel_scale_hst/Npx).array
-        vis = gal_kimage_real[uv_pos]
+        gal_ = catalog.makeGalaxy(ind, gal_type=gal_type)
+        # psf = gal_.original_psf
+        # gal_ = gs.Convolve([gal_, psf])
+        gal_ = gal_.withFlux(flux_batch[i])
+        gal_ = gal_.shear(g1=g1, g2=g2)
+        gal_kimage_ = gal_.drawKImage(nx=Npx, ny=Npx, scale=2*np.pi/pixel_scale_hst/Npx).array
+        vis = gal_kimage_[uv_pos]
         im_gal.append(complex_2_stack(vis))
     return jnp.array(im_gal), indices
 
@@ -180,7 +184,7 @@ def gen_gal_dataset(
     g_1 = u * g1
     g_2 = u * g2
     # generate galaxy image
-    if profile_type == "real":
+    if profile_type == "real" or profile_type == "cosmos":
         
         im_gal, indices = draw_HST_profiles(
             Ngal=Ngal, 
@@ -190,6 +194,7 @@ def gen_gal_dataset(
             g2=g2, 
             uv_pos=uv_pos, 
             Npx=Npx, 
+            profile_type=profile_type, 
             sample="23.5"
         )
         data_params = {
