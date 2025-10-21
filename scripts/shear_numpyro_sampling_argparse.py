@@ -741,9 +741,24 @@ def main():
     print("Flatchains:", file=log_file)
     print(flatchain, file=log_file)
 
+    # Compute mean and std of the shear samples
+    g1_scaled = samples["g1"][:,25_000:]
+    g2_scaled = samples["g2"][:,25_000:]
+    samples_g_scaled = np.concatenate([g1_scaled, g2_scaled], -1).reshape((-1,2)) / args.g_sigma * args.g_scale
+    g_mean = np.mean(samples_g_scaled, axis=0)
+    g_std = np.sqrt(np.diag(np.cov(samples_g_scaled, rowvar=False)))
+    print(f"Shear mean: g1={g_mean[0]}, g2={g_mean[1]}")
+    print(f"Shear std: g1={g_std[0]}, g2={g_std[1]}")
+    print(f"Shear mean: g1={g_mean[0]}, g2={g_mean[1]}", file=log_file)
+    print(f"Shear std: g1={g_std[0]}, g2={g_std[1]}", file=log_file)
+    np.savez(
+        os.path.join(out_dir, "radio_shear_stats.npz"),
+        g_mean=g_mean,
+        g_std=g_std,
+    )
+
     # Save samples
     if args.save_samples:
-        print(args.save_samples)
         print("Saving samples...")
         np.savez(os.path.join(out_dir, "radio_samples.npz"), **samples_)
 
