@@ -742,8 +742,8 @@ def main():
     print(flatchain, file=log_file)
 
     # Compute mean and std of the shear samples
-    g1_scaled = samples["g1"][:,25_000:]
-    g2_scaled = samples["g2"][:,25_000:]
+    g1_scaled = samples_["g1"][:,25_000:]
+    g2_scaled = samples_["g2"][:,25_000:]
     samples_g_scaled = np.concatenate([g1_scaled, g2_scaled], -1).reshape((-1,2)) / args.g_sigma * args.g_scale
     g_mean = np.mean(samples_g_scaled, axis=0)
     g_std = np.sqrt(np.diag(np.cov(samples_g_scaled, rowvar=False)))
