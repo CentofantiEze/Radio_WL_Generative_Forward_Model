@@ -1,7 +1,7 @@
 #!/bin/bash
 #SBATCH --mail-user=ezequiel.centofanti@cea.fr
 #SBATCH --mail-type=NONE
-#SBATCH --job-name=test_shear_numpyro    # nom du job
+#SBATCH --job-name=spergel_run    # nom du job
 #SBATCH --ntasks=1                   # nombre total de tache MPI (= nombre total de GPU)
 #SBATCH --ntasks-per-node=1          # nombre de tache MPI par noeud (= nombre de GPU par noeud)
 #SBATCH --gres=gpu:1                 # nombre de GPU par noeud (max 8 avec gpu_p2)
@@ -9,8 +9,8 @@
 #SBATCH -C v100-32g
 #SBATCH --hint=nomultithread          # hyperthreading desactive
 #SBATCH --time=02:00:00               # temps d'execution maximum demande (HH:MM:SS)
-#SBATCH --output=out_sersic_shear_numpyro.out   # nom du fichier de sortie
-#SBATCH --error=err_sersic_shear_numpyro.err    # nom du fichier d'erreur (ici commun avec la sortie)
+#SBATCH --output=out_spergel_run_%A_%a.out   # nom du fichier de sortie
+#SBATCH --error=err_spergel_run_%A_%a.err    # nom du fichier d'erreur (ici commun avec la sortie)
 #SBATCH -A prk@v100                   # specify the project
 #SBATCH --array=0-4                  # array job with 10 tasks
 
