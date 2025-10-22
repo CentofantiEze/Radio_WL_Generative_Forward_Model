@@ -226,6 +226,9 @@ def main():
         default=None,
         help="Absolute path to a json file with arguments",
     )
+    parser.add_argument(
+        "--plot_chains", type=str, default="both", help="Plot chains: samples, scaled, both or none. Default: both."
+    )
 
     args = parser.parse_args()
     # If using arguments from file, load them.
@@ -295,7 +298,7 @@ def main():
     )
     plt.title("Gaussian PSF")
     plt.colorbar()
-    plt.savefig(os.path.join(out_dir, "radio_psf.pdf"))
+    plt.savefig(os.path.join(out_dir, "radio_psf.png"))
 
     # Init seed
     if args.seed is None:
@@ -374,7 +377,7 @@ def main():
     print("Data max:", np.max(np.abs(data_)))
     print(f"Data max: {np.max(np.abs(data_))}", file=log_file)
     plt.colorbar()
-    plt.savefig(os.path.join(out_dir, "radio_data.pdf"))
+    plt.savefig(os.path.join(out_dir, "radio_data.png"))
 
     # Plot a random galaxy
     plt.subplots(1, 2, figsize=(12, 4))
@@ -388,7 +391,7 @@ def main():
     plt.title(f"Observed galaxy {idx} image")
     plt.colorbar()
     plt.tight_layout()
-    plt.savefig(os.path.join(out_dir, "radio_data_galaxy.pdf"))
+    plt.savefig(os.path.join(out_dir, "radio_data_galaxy.png"))
 
     # Sample parameters from their prior
     def draw_params(key):
@@ -467,7 +470,7 @@ def main():
     plt.title("Initial guess for the shear")
     plt.legend()
     # plt.show()
-    plt.savefig(os.path.join(out_dir, "radio_initial_guess.pdf"))
+    plt.savefig(os.path.join(out_dir, "radio_initial_guess.png"))
 
     # Use the the MEADS algorithm for parallel chains on GPUs
     """
@@ -619,7 +622,9 @@ def main():
         ax.set_ylabel(label)
         ax.yaxis.set_label_coords(-0.1, 0.5)
     axes[-1].set_xlabel("step number")
-    plt.savefig(os.path.join(out_dir, "radio_chains.pdf"))
+    if args.plot_chains in ["samples", "both"]:
+        plt.savefig(os.path.join(out_dir, "radio_chains.png"))
+    plt.close()
 
     fig, axes = plt.subplots(len(labels), figsize=(10, 7), sharex=True)
     for i, label in enumerate(labels):
@@ -678,7 +683,9 @@ def main():
         ax.set_ylabel(label)
         ax.yaxis.set_label_coords(-0.1, 0.5)
     axes[-1].set_xlabel("step number")
-    plt.savefig(os.path.join(out_dir, "radio_chains_scaled.pdf"))
+    if args.plot_chains in ["scaled", "both"]:
+        plt.savefig(os.path.join(out_dir, "radio_chains_scaled.png"))
+    plt.close()
 
     two_truths = np.array([args.g1_true, args.g2_true])
     samples_g = np.concatenate([samples_["g1"], samples_["g2"]], -1).reshape(
@@ -690,7 +697,7 @@ def main():
 
     fig = plt.figure(figsize=(7, 7))
     fig = corner.corner(samples_g, truths=two_truths, labels=two_labels, fig=fig)
-    fig.savefig(os.path.join(out_dir, "radio_corner_g.pdf"))
+    fig.savefig(os.path.join(out_dir, "radio_corner_g.png"))
     plt.close()
 
     print("ESS g1", blackjax.diagnostics.effective_sample_size(samples_["g1"][..., 0]))
@@ -742,8 +749,8 @@ def main():
     print(flatchain, file=log_file)
 
     # Compute mean and std of the shear samples
-    g1_scaled = samples_["g1"][:,25_000:]
-    g2_scaled = samples_["g2"][:,25_000:]
+    g1_scaled = samples_["g1"][np.where(flatchain == False),25_000:]
+    g2_scaled = samples_["g2"][np.where(flatchain == False),25_000:]
     samples_g_scaled = np.concatenate([g1_scaled, g2_scaled], -1).reshape((-1,2)) / args.g_sigma * args.g_scale
     g_mean = np.mean(samples_g_scaled, axis=0)
     g_std = np.sqrt(np.diag(np.cov(samples_g_scaled, rowvar=False)))
@@ -755,6 +762,7 @@ def main():
         os.path.join(out_dir, "radio_shear_stats.npz"),
         g_mean=g_mean,
         g_std=g_std,
+        flatchain=flatchain,
     )
 
     # Save samples
