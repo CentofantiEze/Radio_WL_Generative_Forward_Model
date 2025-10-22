@@ -12,7 +12,7 @@
 #SBATCH --output=out_spergel_run_%a.out   # nom du fichier de sortie
 #SBATCH --error=err_spergel_run_%a.err    # nom du fichier d'erreur (ici commun avec la sortie)
 #SBATCH -A prk@v100                   # specify the project
-#SBATCH --array=0-4                  # array job with 10 tasks
+#SBATCH --array=0-99                 # array job with 10 tasks
 
 # nettoyage des modules charges en interactif et herites par defaut
 module purge
@@ -73,8 +73,9 @@ args=(
     --num 20 
     --num_steps 5000 
     --id spergel_run_${SLURM_ARRAY_TASK_ID} 
-    # --save_samples false 
-    --output_dir /lustre/fswork/projects/rech/prk/uds36vp/repos/Radio_WL_Generative_Forward_Model/outputs
+    # --save_samples false
+    --plot_chains scaled
+    --output_dir /lustre/fswork/projects/rech/prk/uds36vp/repos/Radio_WL_Generative_Forward_Model/outputs/spergel_parallel_100
 )
 
 srun python shear_numpyro_sampling_argparse.py "${args[@]}"
