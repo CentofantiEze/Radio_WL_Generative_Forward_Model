@@ -8,7 +8,7 @@
 #SBATCH --cpus-per-task=10           # nombre de coeurs CPU par tache (un quart du noeud ici)
 #SBATCH -C v100-32g
 #SBATCH --hint=nomultithread          # hyperthreading desactive
-#SBATCH --time=02:00:00               # temps d'execution maximum demande (HH:MM:SS)
+#SBATCH --time=10:00:00               # temps d'execution maximum demande (HH:MM:SS)
 #SBATCH --output=out_spergel_run_%a.out   # nom du fichier de sortie
 #SBATCH --error=err_spergel_run_%a.err    # nom du fichier d'erreur (ici commun avec la sortie)
 #SBATCH -A prk@v100                   # specify the project
