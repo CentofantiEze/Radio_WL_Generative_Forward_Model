@@ -131,7 +131,7 @@ def main():
     )
     parser.add_argument("--g_sigma", type=float, default=1.0, help="Shear prior sigma")
     parser.add_argument("--g_scale", type=float, default=0.1, help="Shear prior scale")
-    parser.add_argument("--sersic_index", type=float, default=1.0, help="Sersic index")
+    parser.add_argument("--sersic_index", type=float, default=None, help="Sersic index")
     parser.add_argument("--antenna_type", type=str, default="random", help="Antenna type: random or file")
     parser.add_argument("--antenna_file", type=str, default=None, help="Path to antenna file if antenna_type is file")
     parser.add_argument("--uv_mask_weighting", type=str, default="binary", help="UV weighting: binary or histogram")
