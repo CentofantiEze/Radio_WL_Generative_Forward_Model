@@ -30,7 +30,7 @@ args=(
     --Npx 128
     --pixel_scale 0.15
     --noise_uv 0.004 
-    # --trecs_data_path ../data/trecs_gal_params.npy 
+    --trecs_data_path ../data/trecs_gal_params.npy 
     # --deepshape_data_path ../data/val_set_rivi.h5
     --cosmos_data_path /lustre/fsn1/projects/rech/prk/uds36vp/datasets/COSMOS_23.5_training_sample
     --data_profile real
