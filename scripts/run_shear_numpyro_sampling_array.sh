@@ -12,7 +12,7 @@
 #SBATCH --output=out_cosmos_run_%a.out   # nom du fichier de sortie
 #SBATCH --error=err_cosmos_run_%a.err    # nom du fichier d'erreur (ici commun avec la sortie)
 #SBATCH -A prk@v100                   # specify the project
-#SBATCH --array=0-3                 # array job with 100 tasks
+#SBATCH --array=0-99                 # array job with 100 tasks
 
 # nettoyage des modules charges en interactif et herites par defaut
 module purge
