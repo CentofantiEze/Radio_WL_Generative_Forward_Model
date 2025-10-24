@@ -4,7 +4,7 @@ import galsim as gs
 import h5py
 import jax
 import jax.numpy as jnp
-import jax_galsim as galsim
+import jax_galsim as galsim # type: ignore
 import numpy as np
 import numpyro
 import numpyro.distributions as dist

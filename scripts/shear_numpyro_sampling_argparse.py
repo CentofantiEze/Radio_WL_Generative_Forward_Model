@@ -18,7 +18,7 @@ import json
 import os
 import sys
 
-import jax_galsim as galsim
+import jax_galsim as galsim # type: ignore
 
 # Add project root to sys.path
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
@@ -115,7 +115,7 @@ def main():
         help="Path to the COSMOS dataset 23.5 (for real galaxy images)",
     )
     parser.add_argument(
-        "--data_profile", type=str, default="exp", help="Galaxy dataset profile type: exp, sersic or spergel"
+        "--data_profile", type=str, default="exp", help="Galaxy dataset profile type: exp, sersic, spergel or real"
     )
     parser.add_argument(
         "--g1_true", type=float, default=-0.05, help="True g1 shear value"
