@@ -12,7 +12,7 @@
 #SBATCH --output=out_spergel_run_%a.out   # nom du fichier de sortie
 #SBATCH --error=err_spergel_run_%a.err    # nom du fichier d'erreur (ici commun avec la sortie)
 #SBATCH -A prk@v100                   # specify the project
-#SBATCH --array=0-99                 # array job with 100 tasks
+#SBATCH --array=0-3                 # array job with 100 tasks
 
 # nettoyage des modules charges en interactif et herites par defaut
 module purge
@@ -30,10 +30,10 @@ args=(
     --Npx 128
     --pixel_scale 0.15
     --noise_uv 0.004 
-    --trecs_data_path ../data/trecs_gal_params.npy 
+    # --trecs_data_path ../data/trecs_gal_params.npy 
     # --deepshape_data_path ../data/val_set_rivi.h5
-    # --cosmos_data_path /lustre/fsn1/projects/rech/prk/uds36vp/datasets/COSMOS_23.5_training_sample
-    --data_profile spergel
+    --cosmos_data_path /lustre/fsn1/projects/rech/prk/uds36vp/datasets/COSMOS_23.5_training_sample
+    --data_profile real
     # --sersic_index 1.0 
     --g1_true -0.05 
     --g2_true 0.05 
@@ -72,10 +72,10 @@ args=(
     # --step_size 0.005 
     --num 20 
     --num_steps 5000 
-    --id spergel_run_${SLURM_ARRAY_TASK_ID} 
+    --id cosmos_real_run_${SLURM_ARRAY_TASK_ID} 
     # --save_samples false
     --plot_chains scaled
-    --output_dir /lustre/fswork/projects/rech/prk/uds36vp/repos/Radio_WL_Generative_Forward_Model/outputs/spergel_parallel_100_rand_n
+    --output_dir /lustre/fswork/projects/rech/prk/uds36vp/repos/Radio_WL_Generative_Forward_Model/outputs/cosmos_real_parallel_100
 )
 
 srun python shear_numpyro_sampling_argparse.py "${args[@]}"
