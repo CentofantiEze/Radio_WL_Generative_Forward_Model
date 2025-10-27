@@ -1,7 +1,7 @@
 #!/bin/bash
 #SBATCH --mail-user=ezequiel.centofanti@cea.fr
 #SBATCH --mail-type=NONE
-#SBATCH --job-name=cosmos_run    # nom du job
+#SBATCH --job-name=cosmos_param_run    # nom du job
 #SBATCH --ntasks=1                   # nombre total de tache MPI (= nombre total de GPU)
 #SBATCH --ntasks-per-node=1          # nombre de tache MPI par noeud (= nombre de GPU par noeud)
 #SBATCH --gres=gpu:1                 # nombre de GPU par noeud (max 8 avec gpu_p2)
@@ -33,7 +33,8 @@ args=(
     --trecs_data_path ../data/trecs_gal_params.npy 
     # --deepshape_data_path ../data/val_set_rivi.h5
     --cosmos_data_path /lustre/fsn1/projects/rech/prk/uds36vp/datasets/COSMOS_23.5_training_sample
-    --data_profile real
+    # cosmos: parametric cosmos, real: real cosmos images
+    --data_profile cosmos
     # --sersic_index 1.0 
     --g1_true -0.05 
     --g2_true 0.05 
@@ -72,10 +73,10 @@ args=(
     # --step_size 0.005 
     --num 20 
     --num_steps 5000 
-    --id cosmos_real_run_${SLURM_ARRAY_TASK_ID} 
+    --id cosmos_param_run_${SLURM_ARRAY_TASK_ID} 
     # --save_samples false
     --plot_chains scaled
-    --output_dir /lustre/fswork/projects/rech/prk/uds36vp/repos/Radio_WL_Generative_Forward_Model/outputs/cosmos_real_parallel_100
+    --output_dir /lustre/fswork/projects/rech/prk/uds36vp/repos/Radio_WL_Generative_Forward_Model/outputs/cosmos_param_parallel_100
 )
 
 srun python shear_numpyro_sampling_argparse.py "${args[@]}"
