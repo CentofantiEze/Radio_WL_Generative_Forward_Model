@@ -1,7 +1,7 @@
 #!/bin/bash
 #SBATCH --mail-user=ezequiel.centofanti@cea.fr
 #SBATCH --mail-type=NONE
-#SBATCH --job-name=cosmos_param_run    # nom du job
+#SBATCH --job-name=run_5_-5    # nom du job
 #SBATCH --ntasks=1                   # nombre total de tache MPI (= nombre total de GPU)
 #SBATCH --ntasks-per-node=1          # nombre de tache MPI par noeud (= nombre de GPU par noeud)
 #SBATCH --gres=gpu:1                 # nombre de GPU par noeud (max 8 avec gpu_p2)
@@ -9,8 +9,8 @@
 #SBATCH -C v100-32g
 #SBATCH --hint=nomultithread          # hyperthreading desactive
 #SBATCH --time=10:00:00               # temps d'execution maximum demande (HH:MM:SS)
-#SBATCH --output=out_cosmos_run_%a.out   # nom du fichier de sortie
-#SBATCH --error=err_cosmos_run_%a.err    # nom du fichier d'erreur (ici commun avec la sortie)
+#SBATCH --output=out_run_5_-5_%a.out   # nom du fichier de sortie
+#SBATCH --error=err_run_5_-5_%a.err    # nom du fichier d'erreur (ici commun avec la sortie)
 #SBATCH -A prk@v100                   # specify the project
 #SBATCH --array=0-99                 # array job with 100 tasks
 
@@ -32,12 +32,12 @@ args=(
     --noise_uv 0.004 
     --trecs_data_path ../data/trecs_gal_params.npy 
     # --deepshape_data_path ../data/val_set_rivi.h5
-    --cosmos_data_path /lustre/fsn1/projects/rech/prk/uds36vp/datasets/COSMOS_23.5_training_sample
+    # --cosmos_data_path /lustre/fsn1/projects/rech/prk/uds36vp/datasets/COSMOS_23.5_training_sample
     # cosmos: parametric cosmos, real: real cosmos images
-    --data_profile cosmos
+    --data_profile spergel
     # --sersic_index 1.0 
-    --g1_true -0.05 
-    --g2_true 0.05 
+    --g1_true 0.05 
+    --g2_true -0.05 
     --ell_sigma 1.0 
     --ell_scale 0.2 
     --g_sigma 1.0 
@@ -73,10 +73,10 @@ args=(
     # --step_size 0.005 
     --num 20 
     --num_steps 5000 
-    --id cosmos_param_run_${SLURM_ARRAY_TASK_ID} 
+    --id run_5_-5_id_${SLURM_ARRAY_TASK_ID} 
     # --save_samples false
     --plot_chains scaled
-    --output_dir /lustre/fswork/projects/rech/prk/uds36vp/repos/Radio_WL_Generative_Forward_Model/outputs/cosmos_param_parallel_100
+    --output_dir /lustre/fswork/projects/rech/prk/uds36vp/repos/Radio_WL_Generative_Forward_Model/outputs/shear_response/run_5_-5
 )
 
 srun python shear_numpyro_sampling_argparse.py "${args[@]}"
