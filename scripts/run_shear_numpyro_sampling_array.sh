@@ -1,7 +1,7 @@
 #!/bin/bash
 #SBATCH --mail-user=ezequiel.centofanti@cea.fr
 #SBATCH --mail-type=NONE
-#SBATCH --job-name=run_0_0    # nom du job
+#SBATCH --job-name=run_25_-25    # nom du job
 #SBATCH --ntasks=1                   # nombre total de tache MPI (= nombre total de GPU)
 #SBATCH --ntasks-per-node=1          # nombre de tache MPI par noeud (= nombre de GPU par noeud)
 #SBATCH --gres=gpu:1                 # nombre de GPU par noeud (max 8 avec gpu_p2)
@@ -9,8 +9,8 @@
 #SBATCH -C v100-32g
 #SBATCH --hint=nomultithread          # hyperthreading desactive
 #SBATCH --time=10:00:00               # temps d'execution maximum demande (HH:MM:SS)
-#SBATCH --output=out_run_0_0_%a.out   # nom du fichier de sortie
-#SBATCH --error=err_run_0_0_%a.err    # nom du fichier d'erreur (ici commun avec la sortie)
+#SBATCH --output=out_run_25_-25_%a.out   # nom du fichier de sortie
+#SBATCH --error=err_run_25_-25_%a.err    # nom du fichier d'erreur (ici commun avec la sortie)
 #SBATCH -A prk@v100                   # specify the project
 #SBATCH --array=0-99                 # array job with 100 tasks
 
@@ -36,8 +36,8 @@ args=(
     # cosmos: parametric cosmos, real: real cosmos images
     --data_profile spergel
     # --sersic_index 1.0 
-    --g1_true 0.0 
-    --g2_true 0.0 
+    --g1_true 0.025 
+    --g2_true -0.025 
     --ell_sigma 1.0 
     --ell_scale 0.2 
     --g_sigma 1.0 
@@ -73,10 +73,10 @@ args=(
     # --step_size 0.005 
     --num 20 
     --num_steps 5000 
-    --id run_0_0_id_${SLURM_ARRAY_TASK_ID} 
+    --id run_25_-25_id_${SLURM_ARRAY_TASK_ID} 
     # --save_samples false
     --plot_chains scaled
-    --output_dir /lustre/fswork/projects/rech/prk/uds36vp/repos/Radio_WL_Generative_Forward_Model/outputs/shear_response/run_0_0
+    --output_dir /lustre/fswork/projects/rech/prk/uds36vp/repos/Radio_WL_Generative_Forward_Model/outputs/shear_response/run_25_-25
 )
 
 srun python shear_numpyro_sampling_argparse.py "${args[@]}"
