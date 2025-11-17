@@ -139,7 +139,7 @@ def main():
     parser.add_argument("--E_lim", type=float, default=50e3, help="East limit")
     parser.add_argument("--N_lim", type=float, default=50e3, help="North limit")
     parser.add_argument("--track_time", type=float, default=10, help="Track time")
-    parser.add_argument("--t0", type=float, default=-4, help="Start time")
+    parser.add_argument("--t0", type=float, default=0, help="Start time")
     parser.add_argument("--n_times", type=int, default=4, help="Number of times")
     parser.add_argument("--f", type=float, default=1.4e9, help="Frequency")
     parser.add_argument("--df", type=float, default=1e8, help="Frequency bandwidth")
@@ -271,6 +271,7 @@ def main():
         Npx=args.Npx,
         fov_size=fov_size,
         track_time=args.track_time,
+        t_0=args.t0,
         n_times=args.n_times,
         f=args.f,
         df=args.df,
