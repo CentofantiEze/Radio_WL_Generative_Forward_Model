@@ -74,7 +74,7 @@ def draw_spergel_profile(n, hlr, flux, e1, e2, g1, g2, uv_pos, Npx, pixel_scale)
 
     return complex_2_stack(vis)
 
-def draw_HST_profiles(Ngal, dataset_dir, flux_batch, g1, g2, uv_pos, Npx, pixel_scale_hst=0.03, profile_type="real", sample="23.5"):
+def draw_HST_profiles(Ngal, dataset_dir, g1, g2, uv_pos, Npx, pixel_scale_hst=0.03, profile_type="real", sample="23.5"):
 
     catalog = gs.COSMOSCatalog(sample=sample, dir=dataset_dir, min_flux=20., min_hlr=0.2, max_hlr=1.)
     indices = np.random.choice(catalog.getNObjects(), Ngal, replace=False)
@@ -85,9 +85,11 @@ def draw_HST_profiles(Ngal, dataset_dir, flux_batch, g1, g2, uv_pos, Npx, pixel_
         gal_type = 'real'
     for i, ind in enumerate(indices):
         gal_ = catalog.makeGalaxy(ind, gal_type=gal_type)
+        # Use the un-convolved galaxy profile
         # psf = gal_.original_psf
         # gal_ = gs.Convolve([gal_, psf])
-        gal_ = gal_.withFlux(flux_batch[i])
+        # Use the original flux
+        # gal_ = gal_.withFlux(flux_batch[i])
         gal_ = gal_.shear(g1=g1, g2=g2)
         gal_kimage_ = gal_.drawKImage(nx=Npx, ny=Npx, scale=2*np.pi/pixel_scale_hst/Npx).array
         vis = gal_kimage_[uv_pos]
@@ -164,6 +166,7 @@ def gen_gal_dataset(
     TRECS_fit_dir=None,
     deepshape_dataset_dir=None,
     cosmos_dataset_dir=None,
+    cosmos_sample=None,
     ell_scale=None,
     g1=None,
     g2=None,
@@ -189,13 +192,13 @@ def gen_gal_dataset(
         im_gal, indices = draw_HST_profiles(
             Ngal=Ngal, 
             dataset_dir=cosmos_dataset_dir, 
-            flux_batch=flux_batch, 
+            # flux_batch=flux_batch, 
             g1=g1, 
             g2=g2, 
             uv_pos=uv_pos, 
             Npx=Npx, 
             profile_type=profile_type, 
-            sample="23.5"
+            sample=cosmos_sample
         )
         data_params = {
             "profile_type": profile_type,

@@ -115,6 +115,12 @@ def main():
         help="Path to the COSMOS dataset 23.5 (for real galaxy images)",
     )
     parser.add_argument(
+        "--cosmos_sample",
+        type=str,
+        default="23.5",
+        help="COSMOS dataset sample to use: 23.5 or 25.2",
+    )
+    parser.add_argument(
         "--data_profile", type=str, default="exp", help="Galaxy dataset profile type: exp, sersic, spergel or real"
     )
     parser.add_argument(
@@ -319,6 +325,7 @@ def main():
         TRECS_fit_dir=args.trecs_data_path,
         deepshape_dataset_dir=args.deepshape_data_path,
         cosmos_dataset_dir=args.cosmos_data_path,
+        cosmos_sample=args.cosmos_sample,
         ell_scale=args.ell_scale,
         g1=args.g1_true,
         g2=args.g2_true,
