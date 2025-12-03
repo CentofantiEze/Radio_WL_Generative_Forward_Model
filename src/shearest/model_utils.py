@@ -123,7 +123,8 @@ def model_fn_VAE(
     flux_min=None,
     latent_dim=None,
     latent_mean=None,
-    autoencoder=None
+    autoencoder=None,
+    gsparams=None
 ):
     z = numpyro.sample("z", dist.Normal(jnp.zeros((Ngal ,latent_dim, latent_dim)), jnp.ones((Ngal ,latent_dim, latent_dim)))) + latent_mean
 
@@ -145,7 +146,7 @@ def model_fn_VAE(
     flux_z = numpyro.sample("flux", dist.Normal(jnp.zeros((Ngal,)), flux_sigma * jnp.ones((Ngal,))))
     flux = flux_min + jax.nn.sigmoid(flux_z / flux_sigma) * (flux_max - flux_min)
 
-    draw = partial(draw_NN_profile, uv_pos=uv_pos, Npx=Npx, pixel_scale_radio=pixel_scale_radio, pixel_scale_vae=pixel_scale_vae, autoencoder=autoencoder)
+    draw = partial(draw_NN_profile, uv_pos=uv_pos, Npx=Npx, pixel_scale_radio=pixel_scale_radio, pixel_scale_vae=pixel_scale_vae, autoencoder=autoencoder, gsparams=gsparams)
     im_gal = jax.vmap(draw)(
         z=z,
         flux=flux,

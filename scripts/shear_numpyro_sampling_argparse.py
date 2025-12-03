@@ -363,6 +363,12 @@ def main():
         # load autoencoder
         VAE_PATH = Path(args.vae_path)
         ae = load_galaxy_autoencoder(VAE_PATH, epoch=args.vae_epoch)
+        # 
+        gsparams = galsim.GSParams(
+            minimum_fft_size=128,
+            folding_threshold=5e-3,
+            maxk_threshold=1e-3,
+)
         # Initialize the forward model
         model = partial(
         model_fn_VAE,
@@ -380,7 +386,8 @@ def main():
         flux_min=args.flux_prior_min,
         latent_dim=args.latent_dim,
         latent_mean=args.latent_mean,
-        autoencoder=ae
+        autoencoder=ae,
+        gsparams=gsparams,
     )
     else:
         model = partial(
