@@ -480,8 +480,9 @@ def main():
         )
 
         return params
-
-    init_val = jax.vmap(find_map)(init_val_)
+    ################## SKIP MAP FOR TESTING #######################
+    # init_val = jax.vmap(find_map)(init_val_)
+    init_val = init_val_
 
     print(
         init_val["g1"] * (args.g_scale / args.g_sigma),
