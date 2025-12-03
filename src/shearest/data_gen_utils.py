@@ -96,6 +96,30 @@ def draw_HST_profiles(Ngal, dataset_dir, g1, g2, uv_pos, Npx, pixel_scale_hst=0.
         im_gal.append(complex_2_stack(vis))
     return jnp.array(im_gal), indices
 
+def draw_NN_profile(z, g1, g2, uv_pos, Npx, pixel_scale_radio, pixel_scale_vae=0.03, autoencoder=None):
+    
+    if autoencoder is None:
+        raise ValueError("Autoencoder model must be provided for NN profile drawing.")
+    
+    # Decode the latent vector to get the galaxy image
+    y = autoencoder.decode(z)
+    
+    # Interpolate Image to galsim object
+    y_gs = gs.InterpolatedImage(gs.Image(y[0], scale=pixel_scale_vae))
+    
+    # Apply shear
+    y_gs = y_gs.shear(g1=g1, g2=g2)
+    
+    # Draw kimage
+    y_kimage = y_gs.drawKImage(nx=Npx, ny=Npx, scale=2*np.pi/pixel_scale_radio/Npx)
+    
+    # Get array
+    y_kimage_array = y_kimage.array
+    
+    # Sample visibilities
+    vis = y_kimage_array[uv_pos]
+    
+    return complex_2_stack(vis)
 
 def sample_galaxy_params(
     Ngal=None, TRECS_fit_dir=None, ell_scale=None, deepshape_dataset_dir=None, profile_type=None, n=None
