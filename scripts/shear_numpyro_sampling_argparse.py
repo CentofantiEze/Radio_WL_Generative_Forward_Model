@@ -30,8 +30,10 @@ import corner
 
 from src.shearest.data_gen_utils import gen_gal_dataset
 from src.shearest.func_utils import stack_2_complex, to_unit_disk
-from src.shearest.model_utils import model_fn
+from src.shearest.model_utils import model_fn, model_fn_VAE
 from src.shearest.psf_utils import compute_radio_uv_mask
+
+from pshear.utils import load_galaxy_autoencoder # type: ignore
 
 # ### Simulation parameters
 # Ngal = 100
@@ -158,7 +160,7 @@ def main():
         default=123,
         help="Random seed for the radio array generation",
     )
-    parser.add_argument("--model_profile", type=str, default="exp", help="Model profile type: exp or spergel")
+    parser.add_argument("--model_profile", type=str, default="exp", help="Model profile type: exp, spergel or VAE")
     parser.add_argument(
         "--ell_prior_sigma", type=float, default=1.0, help="Ellipticity prior sigma"
     )
@@ -192,6 +194,10 @@ def main():
     parser.add_argument(
         "--flux_prior_max", type=float, default=0.25, help="Flux prior max"
     )
+    parser.add_argument("--latent_dim", type=int, default=4, help="Latent dimension for VAE, z.shape -> (latent_dim, latent_dim).")
+    parser.add_argument("--latent_mean", type=float, default=0., help="Latent representation mean value.")
+    parser.add_argument("--vae_path", type=str, default=None, help="Path to the trained VAE model.")
+    parser.add_argument("--vae_epoch", type=int, default=None, help="Epoch of the trained VAE model.")
     parser.add_argument("--lr_map", type=float, default=1e-2, help="MAP learning rate")
     parser.add_argument(
         "--n_steps_map", type=int, default=5000, help="Number of steps for MAP"
@@ -348,28 +354,52 @@ def main():
     np.save(os.path.join(out_dir, "radio_data_params.npy"), data_params)
     np.save(os.path.join(out_dir, "radio_psf_mask.npy"), mask)
 
-    # Init model for sampling
     key, subkey = jax.random.split(key)
-    model = partial(
-        model_fn,
+
+    # Init model for sampling
+    if args.model_profile == "VAE":
+        # load autoencoder
+        ae = load_galaxy_autoencoder(args.vae_path, epoch=args.vae_epoch)
+        # Initialize the forward model
+        model = partial(
+        model_fn_VAE,
         Ngal=args.Ngal,
         Npx=args.Npx,
-        pixel_scale=args.pixel_scale,
+        pixel_scale_radio=args.pixel_scale,
+        pixel_scale_vae=None,
         uv_pos=uv_pos,
         noise_uv=args.noise_uv,
         obs=data,
-        ell_sigma=args.ell_prior_sigma,
-        ell_scale=args.ell_prior_scale,
         g_sigma=args.g_prior_sigma,
         g_scale=args.g_prior_scale,
-        hlr_sigma=args.hlr_prior_sigma,
-        hlr_max=args.hlr_prior_max,
-        hlr_min=args.hlr_prior_min,
         flux_sigma=args.flux_prior_sigma,
         flux_max=args.flux_prior_max,
         flux_min=args.flux_prior_min,
-        profile_type=args.model_profile,
+        latent_dim=args.latent_dim,
+        latent_mean=args.latent_mean,
+        autoencoder=ae
     )
+    else:
+        model = partial(
+            model_fn,
+            Ngal=args.Ngal,
+            Npx=args.Npx,
+            pixel_scale=args.pixel_scale,
+            uv_pos=uv_pos,
+            noise_uv=args.noise_uv,
+            obs=data,
+            ell_sigma=args.ell_prior_sigma,
+            ell_scale=args.ell_prior_scale,
+            g_sigma=args.g_prior_sigma,
+            g_scale=args.g_prior_scale,
+            hlr_sigma=args.hlr_prior_sigma,
+            hlr_max=args.hlr_prior_max,
+            hlr_min=args.hlr_prior_min,
+            flux_sigma=args.flux_prior_sigma,
+            flux_max=args.flux_prior_max,
+            flux_min=args.flux_prior_min,
+            profile_type=args.model_profile,
+        )
     # seeded_model = seed(model, subkey)
 
     # Plot 100 observations
@@ -558,13 +588,14 @@ def main():
     print("ESS g1", blackjax.diagnostics.effective_sample_size(samples_["g1"][..., 0]))
     print("ESS g2", blackjax.diagnostics.effective_sample_size(samples_["g2"][..., 0]))
     print(
-        "ESS hlr", blackjax.diagnostics.effective_sample_size(samples_["hlr"][..., 0])
-    )
-    print(
         "ESS flux", blackjax.diagnostics.effective_sample_size(samples_["flux"][..., 0])
     )
-    print("ESS e1", blackjax.diagnostics.effective_sample_size(samples_["e1"][..., 0]))
-    print("ESS e2", blackjax.diagnostics.effective_sample_size(samples_["e2"][..., 0]))
+    if args.model_profile != "VAE":
+        print(
+            "ESS hlr", blackjax.diagnostics.effective_sample_size(samples_["hlr"][..., 0])
+        )
+        print("ESS e1", blackjax.diagnostics.effective_sample_size(samples_["e1"][..., 0]))
+        print("ESS e2", blackjax.diagnostics.effective_sample_size(samples_["e2"][..., 0]))
     print("ESS at the end of first loop", file=log_file)
     print(
         "ESS g1",
@@ -577,25 +608,27 @@ def main():
         file=log_file,
     )
     print(
-        "ESS hlr",
-        blackjax.diagnostics.effective_sample_size(samples_["hlr"][..., 0]),
-        file=log_file,
-    )
-    print(
         "ESS flux",
         blackjax.diagnostics.effective_sample_size(samples_["flux"][..., 0]),
         file=log_file,
     )
-    print(
-        "ESS e1",
-        blackjax.diagnostics.effective_sample_size(samples_["e1"][..., 0]),
-        file=log_file,
-    )
-    print(
-        "ESS e2",
-        blackjax.diagnostics.effective_sample_size(samples_["e2"][..., 0]),
-        file=log_file,
-    )
+    if args.model_profile != "VAE":
+        print(
+            "ESS hlr",
+            blackjax.diagnostics.effective_sample_size(samples_["hlr"][..., 0]),
+            file=log_file,
+        )
+        
+        print(
+            "ESS e1",
+            blackjax.diagnostics.effective_sample_size(samples_["e1"][..., 0]),
+            file=log_file,
+        )
+        print(
+            "ESS e2",
+            blackjax.diagnostics.effective_sample_size(samples_["e2"][..., 0]),
+            file=log_file,
+        )
 
     # extra chains
     for i in range(args.num):
@@ -614,7 +647,10 @@ def main():
     }
 
     # labels = ["hlr", "flux", "r_ell", "angle_ell", "g1", "g2"]
-    labels = ["hlr", "flux", "e1", "e2", "g1", "g2"]
+    if args.model_profile == "VAE":
+        labels = ["flux", "g1", "g2"]
+    else:
+        labels = ["hlr", "flux", "e1", "e2", "g1", "g2"]
 
     fig, axes = plt.subplots(len(labels), figsize=(10, 7), sharex=True)
     for i, label in enumerate(labels):
@@ -711,13 +747,15 @@ def main():
     print("ESS g1", blackjax.diagnostics.effective_sample_size(samples_["g1"][..., 0]))
     print("ESS g2", blackjax.diagnostics.effective_sample_size(samples_["g2"][..., 0]))
     print(
-        "ESS hlr", blackjax.diagnostics.effective_sample_size(samples_["hlr"][..., 0])
-    )
-    print(
         "ESS flux", blackjax.diagnostics.effective_sample_size(samples_["flux"][..., 0])
     )
-    print("ESS e1", blackjax.diagnostics.effective_sample_size(samples_["e1"][..., 0]))
-    print("ESS e2", blackjax.diagnostics.effective_sample_size(samples_["e2"][..., 0]))
+    if args.model_profile != "VAE":
+        print(
+            "ESS hlr", blackjax.diagnostics.effective_sample_size(samples_["hlr"][..., 0])
+        )
+        
+        print("ESS e1", blackjax.diagnostics.effective_sample_size(samples_["e1"][..., 0]))
+        print("ESS e2", blackjax.diagnostics.effective_sample_size(samples_["e2"][..., 0]))
     print("ESS at the end of second loop", file=log_file)
     print(
         "ESS g1",
@@ -730,25 +768,26 @@ def main():
         file=log_file,
     )
     print(
-        "ESS hlr",
-        blackjax.diagnostics.effective_sample_size(samples_["hlr"][..., 0]),
-        file=log_file,
-    )
-    print(
         "ESS flux",
         blackjax.diagnostics.effective_sample_size(samples_["flux"][..., 0]),
         file=log_file,
     )
-    print(
-        "ESS e1",
-        blackjax.diagnostics.effective_sample_size(samples_["e1"][..., 0]),
-        file=log_file,
-    )
-    print(
-        "ESS e2",
-        blackjax.diagnostics.effective_sample_size(samples_["e2"][..., 0]),
-        file=log_file,
-    )
+    if args.model_profile != "VAE":
+        print(
+            "ESS hlr",
+            blackjax.diagnostics.effective_sample_size(samples_["hlr"][..., 0]),
+            file=log_file,
+        )
+        print(
+            "ESS e1",
+            blackjax.diagnostics.effective_sample_size(samples_["e1"][..., 0]),
+            file=log_file,
+        )
+        print(
+            "ESS e2",
+            blackjax.diagnostics.effective_sample_size(samples_["e2"][..., 0]),
+            file=log_file,
+        )
 
     flatchain = np.std(samples_["g1"], axis=1) < 1e-4
     print("Flatchains:")

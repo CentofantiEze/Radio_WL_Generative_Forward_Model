@@ -96,7 +96,7 @@ def draw_HST_profiles(Ngal, dataset_dir, flux_batch, g1, g2, uv_pos, Npx, pixel_
         im_gal.append(complex_2_stack(vis))
     return jnp.array(im_gal), indices
 
-def draw_NN_profile(z, g1, g2, uv_pos, Npx, pixel_scale_radio, pixel_scale_vae=0.03, autoencoder=None):
+def draw_NN_profile(z, flux ,g1, g2, uv_pos, Npx, pixel_scale_radio, pixel_scale_vae=0.03, autoencoder=None):
     
     if autoencoder is None:
         raise ValueError("Autoencoder model must be provided for NN profile drawing.")
@@ -109,6 +109,9 @@ def draw_NN_profile(z, g1, g2, uv_pos, Npx, pixel_scale_radio, pixel_scale_vae=0
     
     # Apply shear
     y_gs = y_gs.shear(g1=g1, g2=g2)
+    
+    # Set flux
+    y_gs = y_gs.withFlux(flux)
     
     # Draw kimage
     y_kimage = y_gs.drawKImage(nx=Npx, ny=Npx, scale=2*np.pi/pixel_scale_radio/Npx)
