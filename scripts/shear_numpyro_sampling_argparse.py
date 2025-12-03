@@ -199,6 +199,7 @@ def main():
     parser.add_argument("--latent_mean", type=float, default=0., help="Latent representation mean value.")
     parser.add_argument("--vae_path", type=str, default=None, help="Path to the trained VAE model.")
     parser.add_argument("--vae_epoch", type=int, default=None, help="Epoch of the trained VAE model.")
+    parser.add_argument("--pixel_scale_vae", type=float, default=0.03, help="Pixel scale for VAE images, default: HST pixel scale (0.03 arcsec/pixel).")
     parser.add_argument("--lr_map", type=float, default=1e-2, help="MAP learning rate")
     parser.add_argument(
         "--n_steps_map", type=int, default=5000, help="Number of steps for MAP"
@@ -368,7 +369,7 @@ def main():
         Ngal=args.Ngal,
         Npx=args.Npx,
         pixel_scale_radio=args.pixel_scale,
-        pixel_scale_vae=None,
+        pixel_scale_vae=args.pixel_scale_vae,
         uv_pos=uv_pos,
         noise_uv=args.noise_uv,
         obs=data,
