@@ -97,15 +97,11 @@ def draw_HST_profiles(Ngal, dataset_dir, flux_batch, g1, g2, uv_pos, Npx, pixel_
     return jnp.array(im_gal), indices
 
 def draw_NN_profile(z, flux ,g1, g2, uv_pos, Npx, pixel_scale_radio, pixel_scale_vae=0.03, autoencoder=None):
-    
-    if autoencoder is None:
-        raise ValueError("Autoencoder model must be provided for NN profile drawing.")
-    
     # Decode the latent vector to get the galaxy image
     y = autoencoder.decode(z)
     
     # Interpolate Image to galsim object
-    y_gs = gs.InterpolatedImage(gs.Image(y[0], scale=pixel_scale_vae))
+    y_gs = galsim.InterpolatedImage(galsim.Image(y[0], scale=pixel_scale_vae))
     
     # Apply shear
     y_gs = y_gs.shear(g1=g1, g2=g2)
