@@ -1,5 +1,6 @@
 import warnings
 from functools import partial
+from pathlib import Path
 
 import blackjax
 import jax
@@ -359,7 +360,8 @@ def main():
     # Init model for sampling
     if args.model_profile == "VAE":
         # load autoencoder
-        ae = load_galaxy_autoencoder(args.vae_path, epoch=args.vae_epoch)
+        VAE_PATH = Path(args.vae_path)
+        ae = load_galaxy_autoencoder(VAE_PATH, epoch=args.vae_epoch)
         # Initialize the forward model
         model = partial(
         model_fn_VAE,
