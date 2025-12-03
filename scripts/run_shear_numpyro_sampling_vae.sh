@@ -12,6 +12,7 @@
 #SBATCH --output=out_sersic_shear_numpyro.out   # nom du fichier de sortie
 #SBATCH --error=err_sersic_shear_numpyro.err    # nom du fichier d'erreur (ici commun avec la sortie)
 #SBATCH -A prk@v100                   # specify the project
+#SBATCH --qos=qos_gpu-dev             # specify the qos: qos_gpu-dev or qos_gpu-t3
 
 # nettoyage des modules charges en interactif et herites par defaut
 module purge
