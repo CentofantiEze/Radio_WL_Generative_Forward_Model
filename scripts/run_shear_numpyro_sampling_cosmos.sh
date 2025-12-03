@@ -17,7 +17,9 @@
 module purge
 
 # chargement des modules
-module load tensorflow-gpu/py3/2.16.1
+# module load tensorflow-gpu/py3/2.16.1
+module load anaconda-py3/2024.06
+conda activate forwardmodel
 
 # echo launched commands
 set -x
