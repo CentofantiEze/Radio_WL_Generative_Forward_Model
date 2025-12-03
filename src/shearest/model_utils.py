@@ -125,7 +125,7 @@ def model_fn_VAE(
     latent_mean=None,
     autoencoder=None
 ):
-    u = jnp.ones((Ngal, latent_dim, latent_dim))  # sampling galaxies all at once
+    u = jnp.ones((Ngal, 1 ,latent_dim, latent_dim))  # sampling galaxies all at once
     z = numpyro.sample("z", dist.Normal(u * 0.0, u * 1.0)) + latent_mean
 
     # assuming constant shear across galaxies
@@ -143,7 +143,8 @@ def model_fn_VAE(
     g = to_unit_disk(g)
 
     # flux
-    flux_z = numpyro.sample("flux", dist.Normal(0.0 * u, flux_sigma * u))
+    v = jnp.ones((Ngal,))  # sampling galaxies all at once
+    flux_z = numpyro.sample("flux", dist.Normal(0.0 * v, flux_sigma * v))
     flux = flux_min + jax.nn.sigmoid(flux_z / flux_sigma) * (flux_max - flux_min)
 
 
