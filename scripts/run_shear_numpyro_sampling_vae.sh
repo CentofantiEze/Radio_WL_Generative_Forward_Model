@@ -71,6 +71,7 @@ args=(
     --vae_path /lustre/fsn1/projects/rech/prk/uds36vp/pshear/cosmos/runs/pretrained_benjamin
     --latent_dim 4
     --latent_mean 0.75
+    --pixel_scale_vae 0.03
     --lr_map 3e-3 
     --n_steps_map 2500 
     --n_warmup 50 
