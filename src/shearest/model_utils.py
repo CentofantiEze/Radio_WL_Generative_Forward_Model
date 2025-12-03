@@ -6,7 +6,7 @@ import numpy as np
 import numpyro
 import numpyro.distributions as dist
 
-from .data_gen_utils import draw_exp_profile, draw_spergel_profile
+from .data_gen_utils import draw_exp_profile, draw_spergel_profile, draw_NN_profile
 from .func_utils import to_unit_disk
 
 
@@ -106,4 +106,45 @@ def model_fn(
     else:
         raise ValueError("Profile type not recognized.")
    
+    return numpyro.sample("obs", dist.Normal(im_gal, noise_uv), obs=obs)
+
+def model_fn_VAE(
+    Ngal=None,
+    Npx=None,
+    pixel_scale_radio=None,
+    pixel_scale_vae=None,
+    uv_pos=None,
+    noise_uv=None,
+    obs=None,
+    g_sigma=None,
+    g_scale=None,
+    latent_dim=None,
+    latent_mean=None,
+    autoencoder=None
+):
+    u = jnp.ones((Ngal, latent_dim, latent_dim))  # sampling galaxies all at once
+    z = numpyro.sample("z", dist.Normal(u * 0.0, u * 1.0)) + latent_mean
+
+    # assuming constant shear across galaxies
+    g1 = (
+        numpyro.sample("g1", dist.Normal(jnp.zeros((1,)), g_sigma * jnp.ones((1,))))
+        * g_scale
+        / g_sigma
+    )
+    g2 = (
+        numpyro.sample("g2", dist.Normal(jnp.zeros((1,)), g_sigma * jnp.ones((1,))))
+        * g_scale
+        / g_sigma
+    )
+    g = jnp.repeat(jnp.stack([g1, g2], 0), Ngal, -1)
+    g = to_unit_disk(g)
+
+
+    draw = partial(draw_NN_profile, uv_pos=uv_pos, Npx=Npx, pixel_scale_radio=pixel_scale_radio, pixel_scale_vae=pixel_scale_vae, autoencoder=autoencoder)
+    im_gal = jax.vmap(draw)(
+        z=z,
+        g1=g[0],
+        g2=g[1],
+    )
+
     return numpyro.sample("obs", dist.Normal(im_gal, noise_uv), obs=obs)
