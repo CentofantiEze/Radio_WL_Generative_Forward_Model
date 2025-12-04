@@ -5,6 +5,7 @@ import jax.numpy as jnp
 import numpy as np
 import numpyro
 import numpyro.distributions as dist
+from jax import checkpoint
 
 from .data_gen_utils import draw_exp_profile, draw_spergel_profile, draw_NN_profile
 from .func_utils import to_unit_disk
@@ -154,18 +155,12 @@ def model_fn_VAE(
     #     g2=g[1],
     # )
     def scan_body(carry, i):
-        im_gal_i = draw_NN_profile(
-            z=z[i],
-            flux=flux[i],
-            g1=g[0, i],
-            g2=g[1, i],
-            uv_pos=uv_pos,
-            Npx=Npx,
-            pixel_scale_radio=pixel_scale_radio,
-            pixel_scale_vae=pixel_scale_vae,
-            autoencoder=autoencoder,
-            gsparams=gsparams
-        )
+        # Define the function to checkpoint here, closing over the arguments
+        def fun_to_checkpoint(z, flux, g1, g2):
+             return draw_NN_profile(z, flux, g1, g2, uv_pos, Npx, pixel_scale_radio, pixel_scale_vae, autoencoder, gsparams)
+
+        # Apply checkpoint
+        im_gal_i = checkpoint(fun_to_checkpoint)(z[i], flux[i], g[0,i], g[1,i])
         return carry, im_gal_i
 
     _, im_gal = jax.lax.scan(scan_body, None, jnp.arange(Ngal))
