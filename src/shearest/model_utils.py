@@ -146,7 +146,7 @@ def model_fn_VAE(
     flux_z = numpyro.sample("flux", dist.Normal(jnp.zeros((Ngal,)), flux_sigma * jnp.ones((Ngal,))))
     flux = flux_min + jax.nn.sigmoid(flux_z / flux_sigma) * (flux_max - flux_min)
 
-    draw = partial(draw_NN_profile, uv_pos=uv_pos, Npx=Npx, pixel_scale_radio=pixel_scale_radio, pixel_scale_vae=pixel_scale_vae, autoencoder=autoencoder, gsparams=gsparams)
+    # draw = partial(draw_NN_profile, uv_pos=uv_pos, Npx=Npx, pixel_scale_radio=pixel_scale_radio, pixel_scale_vae=pixel_scale_vae, autoencoder=autoencoder, gsparams=gsparams)
     # im_gal = jax.vmap(draw)(
     #     z=z,
     #     flux=flux,
@@ -154,7 +154,18 @@ def model_fn_VAE(
     #     g2=g[1],
     # )
     def scan_body(carry, i):
-        im_gal_i = draw(z=z[i], flux=flux[i], g1=g[0, i], g2=g[1, i])
+        im_gal_i = draw_NN_profile(
+            z=z[i],
+            flux=flux[i],
+            g1=g[0, i],
+            g2=g[1, i],
+            uv_pos=uv_pos,
+            Npx=Npx,
+            pixel_scale_radio=pixel_scale_radio,
+            pixel_scale_vae=pixel_scale_vae,
+            autoencoder=autoencoder,
+            gsparams=gsparams
+        )
         return carry, im_gal_i
 
     _, im_gal = jax.lax.scan(scan_body, None, jnp.arange(Ngal))
