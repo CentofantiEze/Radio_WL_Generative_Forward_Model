@@ -147,11 +147,16 @@ def model_fn_VAE(
     flux = flux_min + jax.nn.sigmoid(flux_z / flux_sigma) * (flux_max - flux_min)
 
     draw = partial(draw_NN_profile, uv_pos=uv_pos, Npx=Npx, pixel_scale_radio=pixel_scale_radio, pixel_scale_vae=pixel_scale_vae, autoencoder=autoencoder, gsparams=gsparams)
-    im_gal = jax.vmap(draw)(
-        z=z,
-        flux=flux,
-        g1=g[0],
-        g2=g[1],
-    )
+    # im_gal = jax.vmap(draw)(
+    #     z=z,
+    #     flux=flux,
+    #     g1=g[0],
+    #     g2=g[1],
+    # )
+    def scan_body(carry, i):
+        im_gal_i = draw(z=z[i], flux=flux[i], g1=g[0, i], g2=g[1, i])
+        return carry, im_gal_i
+
+    _, im_gal = jax.lax.scan(scan_body, None, jnp.arange(Ngal))
 
     return numpyro.sample("obs", dist.Normal(im_gal, noise_uv), obs=obs)
