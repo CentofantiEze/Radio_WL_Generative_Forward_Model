@@ -10,6 +10,7 @@ import numpyro
 import numpyro.distributions as dist
 
 from .func_utils import complex_2_stack, to_unit_disk
+from jax import checkpoint
 
 
 def draw_exp_profile(hlr, flux, e1, e2, g1, g2, uv_pos, Npx, pixel_scale):
@@ -96,7 +97,7 @@ def draw_HST_profiles(Ngal, dataset_dir, flux_batch, g1, g2, uv_pos, Npx, pixel_
         im_gal.append(complex_2_stack(vis))
     return jnp.array(im_gal), indices
 
-def draw_NN_profile(z, flux ,g1, g2, uv_pos, Npx, pixel_scale_radio, pixel_scale_vae=0.03, autoencoder=None, gsparams=None):
+def _draw_NN_profile_body(z, flux ,g1, g2, uv_pos, Npx, pixel_scale_radio, pixel_scale_vae=0.03, autoencoder=None, gsparams=None):
     # Decode the latent vector to get the galaxy image
     y = autoencoder.decode(z[None,:,:])
     
@@ -119,6 +120,8 @@ def draw_NN_profile(z, flux ,g1, g2, uv_pos, Npx, pixel_scale_radio, pixel_scale
     vis = y_kimage_array[uv_pos]
     
     return complex_2_stack(vis)
+
+draw_NN_profile = checkpoint(_draw_NN_profile_body)
 
 def sample_galaxy_params(
     Ngal=None, TRECS_fit_dir=None, ell_scale=None, deepshape_dataset_dir=None, profile_type=None, n=None
