@@ -85,5 +85,5 @@ args=(
     --output_dir /lustre/fswork/projects/rech/prk/uds36vp/repos/Radio_WL_Generative_Forward_Model/outputs
 )
 
-srun python shear_numpyro_sampling_argparse.py "${args[@]}"
+srun python -u shear_numpyro_sampling_argparse.py "${args[@]}"
   
