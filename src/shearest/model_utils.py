@@ -8,7 +8,7 @@ import numpyro.distributions as dist
 from jax import checkpoint
 
 from .data_gen_utils import draw_exp_profile, draw_spergel_profile, draw_NN_profile
-from .func_utils import to_unit_disk
+from .func_utils import to_unit_disk, complex_2_stack
 
 
 # @partial(jax.jit, static_argnums=(0,1,2,3,4))
@@ -125,7 +125,9 @@ def model_fn_VAE(
     latent_dim=None,
     latent_mean=None,
     autoencoder=None,
-    gsparams=None
+    gsparams=None,
+    run_type="batch",
+    batch_size=10
 ):
     z = numpyro.sample("z", dist.Normal(jnp.zeros((Ngal ,latent_dim, latent_dim)), jnp.ones((Ngal ,latent_dim, latent_dim)))) + latent_mean
 
@@ -147,22 +149,56 @@ def model_fn_VAE(
     flux_z = numpyro.sample("flux", dist.Normal(jnp.zeros((Ngal,)), flux_sigma * jnp.ones((Ngal,))))
     flux = flux_min + jax.nn.sigmoid(flux_z / flux_sigma) * (flux_max - flux_min)
 
-    # draw = partial(draw_NN_profile, uv_pos=uv_pos, Npx=Npx, pixel_scale_radio=pixel_scale_radio, pixel_scale_vae=pixel_scale_vae, autoencoder=autoencoder, gsparams=gsparams)
-    # im_gal = jax.vmap(draw)(
-    #     z=z,
-    #     flux=flux,
-    #     g1=g[0],
-    #     g2=g[1],
-    # )
-    def scan_body(carry, i):
-        # Define the function to checkpoint here, closing over the arguments
-        def fun_to_checkpoint(z, flux, g1, g2):
-             return draw_NN_profile(z, flux, g1, g2, uv_pos, Npx, pixel_scale_radio, pixel_scale_vae, autoencoder, gsparams)
+    # Create a partial function to bake in the static arguments for draw_NN_profile.
+    # This is the key to avoiding the TypeError with JAX transformations.
+    draw = partial(draw_NN_profile, 
+                   uv_pos=uv_pos, 
+                   Npx=Npx, 
+                   pixel_scale_radio=pixel_scale_radio, 
+                   pixel_scale_vae=pixel_scale_vae, 
+                   autoencoder=autoencoder, 
+                   gsparams=gsparams)
 
-        # Apply checkpoint
-        im_gal_i = checkpoint(fun_to_checkpoint)(z[i], flux[i], g[0,i], g[1,i])
-        return carry, im_gal_i
+    if run_type == "sequential":
+        def scan_body(carry, i):
+            im_gal_i = checkpoint(draw)(z[i], flux[i], g[0,i], g[1,i])
+            return carry, im_gal_i
+        _, im_gal = jax.lax.scan(scan_body, None, jnp.arange(Ngal))
+    
+    elif run_type == "parallel":
+        im_gal = jax.vmap(draw)(z, flux, g[0], g[1])
 
-    _, im_gal = jax.lax.scan(scan_body, None, jnp.arange(Ngal))
+    elif run_type == "batch":
+        # Pad inputs to be divisible by batch_size
+        pad_size = (batch_size - (Ngal % batch_size)) % batch_size
+        if pad_size > 0:
+            z = jnp.pad(z, ((0, pad_size), (0, 0), (0, 0)), mode='constant')
+            flux = jnp.pad(flux, (0, pad_size), mode='constant')
+            g = jnp.pad(g, ((0, 0), (0, pad_size)), mode='constant')
+        
+        num_batches = z.shape[0] // batch_size
+        
+        # Reshape for batching
+        z_batched = z.reshape((num_batches, batch_size, latent_dim, latent_dim))
+        flux_batched = flux.reshape((num_batches, batch_size))
+        g_batched = g.reshape((2, num_batches, batch_size))
+        g_scan_inp = jnp.transpose(g_batched, (1, 0, 2))
+
+        vmapped_draw = jax.vmap(draw)
+
+        def batch_scan_body(carry, batch_inputs):
+            z_b, flux_b, g_b = batch_inputs
+            im_gal_batch = vmapped_draw(z_b, flux_b, g_b[0], g_b[1])
+            return carry, im_gal_batch
+
+        scan_inputs = (z_batched, flux_batched, g_scan_inp)
+        _, im_gal_batched = jax.lax.scan(batch_scan_body, None, scan_inputs)
+        
+        # Reshape and truncate padding
+        im_gal_padded = im_gal_batched.reshape((-1, im_gal_batched.shape[-1]))
+        im_gal = im_gal_padded[:Ngal]
+
+    else:
+        raise ValueError("run_type must be 'sequential', 'parallel', or 'batch'")
 
     return numpyro.sample("obs", dist.Normal(im_gal, noise_uv), obs=obs)
