@@ -126,7 +126,7 @@ def model_fn_VAE(
     latent_mean=None,
     autoencoder=None,
     gsparams=None,
-    run_type="batch",
+    run_type="sequential",
     batch_size=1
 ):
     z = numpyro.sample("z", dist.Normal(jnp.zeros((Ngal ,latent_dim, latent_dim)), jnp.ones((Ngal ,latent_dim, latent_dim)))) + latent_mean
