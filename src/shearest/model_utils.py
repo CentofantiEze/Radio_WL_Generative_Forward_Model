@@ -127,7 +127,7 @@ def model_fn_VAE(
     autoencoder=None,
     gsparams=None,
     run_type="batch",
-    batch_size=10
+    batch_size=4
 ):
     z = numpyro.sample("z", dist.Normal(jnp.zeros((Ngal ,latent_dim, latent_dim)), jnp.ones((Ngal ,latent_dim, latent_dim)))) + latent_mean
 
@@ -193,7 +193,7 @@ def model_fn_VAE(
 
         scan_inputs = (z_batched, flux_batched, g_scan_inp)
         _, im_gal_batched = jax.lax.scan(batch_scan_body, None, scan_inputs)
-        
+
         # Reshape and truncate padding
         im_gal_padded = im_gal_batched.reshape((-1, 2,im_gal_batched.shape[-1]))
         im_gal = im_gal_padded[:Ngal]
