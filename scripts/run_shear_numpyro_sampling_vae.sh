@@ -74,12 +74,12 @@ args=(
     --latent_mean 0.75
     --pixel_scale_vae 0.03
     --lr_map 3e-3 
-    --n_steps_map 2500 
-    --n_warmup 50 
+    --n_steps_map 25 # 2500
+    --n_warmup 5 # 50
     --num_chains 10 
     # --step_size 0.005 
     --num 20 
-    --num_steps 5000 
+    --num_steps 50 # 5000
     --id vae_cosmos25_2
     --save_samples false 
     --output_dir /lustre/fswork/projects/rech/prk/uds36vp/repos/Radio_WL_Generative_Forward_Model/outputs
