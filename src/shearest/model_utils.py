@@ -8,7 +8,7 @@ import numpyro.distributions as dist
 from jax import checkpoint
 
 from .data_gen_utils import draw_exp_profile, draw_spergel_profile, draw_NN_profile
-from .func_utils import to_unit_disk, complex_2_stack
+from .func_utils import to_unit_disk
 
 
 # @partial(jax.jit, static_argnums=(0,1,2,3,4))
@@ -195,7 +195,7 @@ def model_fn_VAE(
         _, im_gal_batched = jax.lax.scan(batch_scan_body, None, scan_inputs)
         
         # Reshape and truncate padding
-        im_gal_padded = im_gal_batched.reshape((-1, im_gal_batched.shape[-1]))
+        im_gal_padded = im_gal_batched.reshape((-1, 2,im_gal_batched.shape[-1]))
         im_gal = im_gal_padded[:Ngal]
 
     else:
