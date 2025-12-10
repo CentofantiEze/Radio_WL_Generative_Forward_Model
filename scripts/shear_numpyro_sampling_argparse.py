@@ -199,6 +199,8 @@ def main():
     parser.add_argument("--latent_mean", type=float, default=0., help="Latent representation mean value.")
     parser.add_argument("--vae_path", type=str, default=None, help="Path to the trained VAE model.")
     parser.add_argument("--vae_epoch", type=int, default=None, help="Epoch of the trained VAE model.")
+    parser.add_argument("--vae_model_inference_mode", type=str, default="parallel", help="VAE model inference mode: parallel, sequential or batch.")
+    parser.add_argument("--vae_inference_batch_size", type=int, default=1, help="VAE inference batch size if using batch mode.")
     parser.add_argument("--pixel_scale_vae", type=float, default=0.03, help="Pixel scale for VAE images, default: HST pixel scale (0.03 arcsec/pixel).")
     parser.add_argument("--lr_map", type=float, default=1e-2, help="MAP learning rate")
     parser.add_argument(
@@ -389,6 +391,8 @@ def main():
         autoencoder=ae,
         key=subkey,
         gsparams=gsparams,
+        run_type=args.vae_model_inference_mode,
+        batch_size=args.vae_inference_batch_size
     )
     else:
         model = partial(
