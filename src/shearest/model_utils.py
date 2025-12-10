@@ -9,6 +9,7 @@ from jax import checkpoint
 
 from .data_gen_utils import draw_exp_profile, draw_spergel_profile, draw_NN_profile
 from .func_utils import to_unit_disk
+from pshear.nn.utils import split # type: ignore
 
 
 # @partial(jax.jit, static_argnums=(0,1,2,3,4))
@@ -125,6 +126,7 @@ def model_fn_VAE(
     latent_dim=None,
     latent_mean=None,
     autoencoder=None,
+    key=None,
     gsparams=None,
     run_type="sequential",
     batch_size=1
@@ -149,6 +151,18 @@ def model_fn_VAE(
     flux_z = numpyro.sample("flux", dist.Normal(jnp.zeros((Ngal,)), flux_sigma * jnp.ones((Ngal,))))
     flux = flux_min + jax.nn.sigmoid(flux_z / flux_sigma) * (flux_max - flux_min)
 
+    # A key must be provided for the VAE model.
+    if key is None:
+        raise ValueError("model_fn_VAE requires a 'key' argument for autoencoder decoding.")
+
+    # Random keys for autoencoder decoding
+    subkeys = split(key, Ngal)
+
+    # The TracerIntegerConversionError suggests `subkeys` may be a list of arrays.
+    # Stacking them into a single JAX array ensures compatibility with `lax.scan` and `vmap`.
+    if isinstance(subkeys, list):
+        subkeys = jnp.stack(subkeys)
+
     # Create a partial function to bake in the static arguments for draw_NN_profile.
     # This is the key to avoiding the TypeError with JAX transformations.
     draw = partial(draw_NN_profile, 
@@ -160,13 +174,15 @@ def model_fn_VAE(
                    gsparams=gsparams)
 
     if run_type == "sequential":
-        def scan_body(carry, i):
-            im_gal_i = checkpoint(draw)(z[i], flux[i], g[0,i], g[1,i])
+        def scan_body(carry, sliced_inputs):
+            z_i, flux_i, g0_i, g1_i, subkey_i = sliced_inputs
+            im_gal_i = checkpoint(draw)(z_i, flux_i, g0_i, g1_i, subkey_i)
             return carry, im_gal_i
-        _, im_gal = jax.lax.scan(scan_body, None, jnp.arange(Ngal))
-    
+        scan_inputs = (z, flux, g[0], g[1], subkeys)
+        _, im_gal = jax.lax.scan(scan_body, None, scan_inputs)
+
     elif run_type == "parallel":
-        im_gal = jax.vmap(draw)(z, flux, g[0], g[1])
+        im_gal = jax.vmap(draw)(z, flux, g[0], g[1], subkeys)
 
     elif run_type == "batch":
         # Pad inputs to be divisible by batch_size
@@ -177,6 +193,7 @@ def model_fn_VAE(
             g = jnp.pad(g, ((0, 0), (0, pad_size)), mode='constant')
         
         num_batches = z.shape[0] // batch_size
+        subkeys = split(key, num_batches)
         
         # Reshape for batching
         z_batched = z.reshape((num_batches, batch_size, latent_dim, latent_dim))
@@ -187,11 +204,12 @@ def model_fn_VAE(
         vmapped_draw = jax.vmap(draw)
 
         def batch_scan_body(carry, batch_inputs):
-            z_b, flux_b, g_b = batch_inputs
-            im_gal_batch = vmapped_draw(z_b, flux_b, g_b[0], g_b[1])
+            z_b, flux_b, g_b, subkeys = batch_inputs
+            keysbatch = split(subkeys, batch_size)
+            im_gal_batch = vmapped_draw(z_b, flux_b, g_b[0], g_b[1], keysbatch)
             return carry, im_gal_batch
 
-        scan_inputs = (z_batched, flux_batched, g_scan_inp)
+        scan_inputs = (z_batched, flux_batched, g_scan_inp, subkeys)
         _, im_gal_batched = jax.lax.scan(batch_scan_body, None, scan_inputs)
 
         # Reshape and truncate padding

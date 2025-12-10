@@ -96,9 +96,9 @@ def draw_HST_profiles(Ngal, dataset_dir, flux_batch, g1, g2, uv_pos, Npx, pixel_
         im_gal.append(complex_2_stack(vis))
     return jnp.array(im_gal), indices
 
-def draw_NN_profile(z, flux ,g1, g2, uv_pos, Npx, pixel_scale_radio, pixel_scale_vae=0.03, autoencoder=None, gsparams=None):
+def draw_NN_profile(z, flux ,g1, g2, key, uv_pos, Npx, pixel_scale_radio, pixel_scale_vae=0.03, autoencoder=None, gsparams=None):
     # Decode the latent vector to get the galaxy image
-    y = autoencoder.decode(z[None,:,:])
+    y = autoencoder.decode(z[None,:,:], key=key)
     
     # Interpolate Image to galsim object
     y_gs = galsim.InterpolatedImage(galsim.Image(y[0], scale=pixel_scale_vae), gsparams=gsparams)
