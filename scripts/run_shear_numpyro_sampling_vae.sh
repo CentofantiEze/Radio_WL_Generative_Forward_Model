@@ -28,7 +28,7 @@ set -x
 cd ${WORK}/repos/Radio_WL_Generative_Forward_Model/scripts
 
 args=(
-    --Ngal 100
+    --Ngal 1 # 100
     --Npx 128
     --pixel_scale 0.15
     --noise_uv 0.004 
@@ -70,6 +70,8 @@ args=(
     --flux_prior_max 0.25 
     --vae_epoch 920
     --vae_path /lustre/fsn1/projects/rech/prk/uds36vp/pshear/cosmos/runs/pretrained_benjamin
+    --vae_model_inference_mode parallel
+    # --vae_inference_batch_size 10
     --latent_dim 4
     --latent_mean 0.75
     --pixel_scale_vae 0.03
