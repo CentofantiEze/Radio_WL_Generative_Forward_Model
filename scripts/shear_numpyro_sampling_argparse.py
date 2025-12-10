@@ -425,6 +425,10 @@ def main():
         data_complex.append(img_aux)
     if args.Ngal >= 100:
         data_ = rearrange(data_complex[:100], "(n1 n2) h w -> (n1 h) (n2 w)", n1=10, n2=10)
+    else:
+        n1 = int(np.ceil(np.sqrt(args.Ngal)))
+        n2 = int(np.ceil(np.sqrt(args.Ngal)))
+        data_ = rearrange(data_complex[:int(n1*n2)], "(n1 n2) h w -> (n1 h) (n2 w)", n1=n1, n2=n2)
     plt.figure(figsize=(10, 10))
     plt.imshow(np.abs(data_), vmin=np.min(np.abs(data_)), vmax=np.max(np.abs(data_)))
     print("Data shape:", data_.shape)
