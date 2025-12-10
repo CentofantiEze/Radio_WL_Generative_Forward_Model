@@ -80,7 +80,7 @@ args=(
     --n_warmup 5 # 50
     --num_chains 10 
     # --step_size 0.005 
-    --num 20 
+    --num 4 # 20 
     --num_steps 50 # 5000
     --id vae_cosmos25_2
     --save_samples false 
