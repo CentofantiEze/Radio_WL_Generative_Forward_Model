@@ -206,6 +206,7 @@ def main():
     parser.add_argument(
         "--n_steps_map", type=int, default=5000, help="Number of steps for MAP"
     )
+    parser.add_argument("--sampler", type=str, default="ghmc", help="Sampler to use: ghmc or mclmc")
     parser.add_argument(
         "--n_warmup", type=int, default=5000, help="Number of warmup steps for MEADS"
     )
@@ -537,34 +538,63 @@ def main():
     - https://blackjax-devs.github.io/blackjax/autoapi/blackjax/mcmc/ghmc/index.html
     """
 
-    warmup = blackjax.meads_adaptation(
-        log_prob_fn,
-        num_chains=args.num_chains,
-    )
-
     key_warmup, key_sample = jax.random.split(key)
 
-    (last_states, parameters), _ = warmup.run(
-        key_warmup,
-        init_val,
-        num_steps=args.n_warmup,
-    )
+    if args.sampler == "ghmc":
+        print("Using GHMC sampler with MEADS adaptation", file=log_file)
+        warmup = blackjax.meads_adaptation(
+            log_prob_fn,
+            num_chains=args.num_chains,
+        )
 
-    print("Step size:", parameters["step_size"])
-    print(f"Step size: {parameters['step_size']}", file=log_file)
-    if args.step_size is not None:
-        parameters["step_size"] = args.step_size
-        print("Set step size to:", parameters["step_size"])
-        print(f"Set step size to: {parameters['step_size']}", file=log_file)
-    print(parameters.keys(), file=log_file)
-    print(parameters, file=log_file)
-    np.save(
-        os.path.join(out_dir, "radio_meads_warmup.npy"),
-        last_states.position,
-        allow_pickle=True,
-    )
+        (last_states, parameters), _ = warmup.run(
+            key_warmup,
+            init_val,
+            num_steps=args.n_warmup,
+        )
 
-    kernel = blackjax.ghmc(log_prob_fn, **parameters)
+        print("Step size:", parameters["step_size"])
+        print(f"Step size: {parameters['step_size']}", file=log_file)
+        if args.step_size is not None:
+            parameters["step_size"] = args.step_size
+            print("Set step size to:", parameters["step_size"])
+            print(f"Set step size to: {parameters['step_size']}", file=log_file)
+        print(parameters.keys(), file=log_file)
+        print(parameters, file=log_file)
+        np.save(
+            os.path.join(out_dir, "radio_meads_warmup.npy"),
+            last_states.position,
+            allow_pickle=True,
+        )
+
+        kernel = blackjax.ghmc(log_prob_fn, **parameters)
+
+    elif args.sampler == "mclmc":
+        kernel = blackjax.mclmc(log_prob_fn, step_size=1e-3, friction=1.0)
+        state = kernel.init(init_val)
+
+        da_init, da_update, da_final = blackjax.dual_averaging(
+            initial_step_size=1e-3,
+            target_acceptance_rate=None,
+        )
+
+        da_state = da_init()
+
+        for _ in range(args.n_warmup):
+            key_warmup, subkey = jax.random.split(key_warmup)
+            new_state, info = kernel.step(subkey, state)
+            log_energy_change = info.log_kinetic_energy_change
+            da_state = da_update(da_state, log_energy_change)
+            state = new_state
+        
+        step_size = da_final(da_state)
+        print("Step size:", step_size)
+        print(f"Step size: {step_size}", file=log_file)
+
+        kernel = blackjax.mclmc(log_prob_fn, step_size=step_size, friction=1.0)
+
+    else:
+        raise ValueError("Sampler not recognized. Use ghmc or mclmc.")
 
     @partial(jax.jit, static_argnames=("num_steps",))
     def run_hmc(init_states, key, num_steps=1):
