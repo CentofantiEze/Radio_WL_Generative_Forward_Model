@@ -8,11 +8,11 @@
 #SBATCH --cpus-per-task=10           # nombre de coeurs CPU par tache (un quart du noeud ici)
 #SBATCH -C v100-32g
 #SBATCH --hint=nomultithread          # hyperthreading desactive
-#SBATCH --time=02:00:00               # temps d'execution maximum demande (HH:MM:SS)
+#SBATCH --time=19:00:00               # temps d'execution maximum demande (HH:MM:SS)
 #SBATCH --output=out_sersic_shear_numpyro.out   # nom du fichier de sortie
 #SBATCH --error=err_sersic_shear_numpyro.err    # nom du fichier d'erreur (ici commun avec la sortie)
 #SBATCH -A prk@v100                   # specify the project
-#SBATCH --qos=qos_gpu-dev             # specify the qos: qos_gpu-dev or qos_gpu-t3
+#SBATCH --qos=qos_gpu-t3             # specify the qos: qos_gpu-dev or qos_gpu-t3
 
 # nettoyage des modules charges en interactif et herites par defaut
 module purge
@@ -28,7 +28,7 @@ set -x
 cd ${WORK}/repos/Radio_WL_Generative_Forward_Model/scripts
 
 args=(
-    --Ngal 1 # 100
+    --Ngal 25 # 100
     --Npx 128
     --pixel_scale 0.15
     --noise_uv 0.004 
@@ -76,14 +76,14 @@ args=(
     --latent_mean 0.75
     --pixel_scale_vae 0.03
     --lr_map 3e-3 
-    --n_steps_map 2500 # 2500
+    --n_steps_map 1500 # 2500
     --n_warmup 50 # 50
     --num_chains 10 
     # --step_size 0.005 
     --num 20 
     --num_steps 5000 # 5000
-    --id vae_cosmos25_2
-    --save_samples false 
+    --id vae_cosmos_25
+    --save_samples True 
     --output_dir /lustre/fswork/projects/rech/prk/uds36vp/repos/Radio_WL_Generative_Forward_Model/outputs
 )
 
