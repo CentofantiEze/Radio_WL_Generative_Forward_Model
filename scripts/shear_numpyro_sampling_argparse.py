@@ -570,7 +570,7 @@ def main():
         kernel = blackjax.ghmc(log_prob_fn, **parameters)
 
     elif args.sampler == "mclmc":
-        kernel = blackjax.mclmc(log_prob_fn, step_size=1e-3, friction=1.0)
+        kernel = blackjax.mclmc(log_prob_fn, step_size=1e-3)
         state = kernel.init(init_val)
 
         da_init, da_update, da_final = blackjax.dual_averaging(
@@ -591,7 +591,7 @@ def main():
         print("Step size:", step_size)
         print(f"Step size: {step_size}", file=log_file)
 
-        kernel = blackjax.mclmc(log_prob_fn, step_size=step_size, friction=1.0)
+        kernel = blackjax.mclmc(log_prob_fn, step_size=step_size)
 
     else:
         raise ValueError("Sampler not recognized. Use ghmc or mclmc.")
