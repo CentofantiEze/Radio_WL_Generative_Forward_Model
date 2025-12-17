@@ -77,7 +77,7 @@ args=(
     --pixel_scale_vae 0.03
     --lr_map 3e-3 
     --n_steps_map 1500 # 2500
-    # --sampler mcmcd
+    # --sampler mclmc
     --n_warmup 50 # 50
     --num_chains 10 
     # --step_size 0.005 
