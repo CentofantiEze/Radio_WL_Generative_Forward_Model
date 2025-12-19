@@ -581,11 +581,13 @@ def main():
 
         kernel = blackjax.mclmc(log_prob_fn, L=initial_L, step_size=initial_step_size)
 
+        state = kernel.init(init_val)
+
         # Run the adaptation
         last_states, parameters, _ = mclmc_adj.mclmc_find_L_and_step_size(
                                         mclmc_kernel=kernel,
                                         num_steps=args.n_warmup,
-                                        state=init_val,
+                                        state=state,
                                         rng_key=key_warmup,
         )
 
