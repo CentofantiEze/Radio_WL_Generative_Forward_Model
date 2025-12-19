@@ -580,15 +580,15 @@ def main():
         initial_step_size = 1e-3
 
         kernel = blackjax.mclmc(log_prob_fn, L=initial_L, step_size=initial_step_size)
-
-        state = kernel.init(init_val)
+        key_init, key_tune = jax.random.split(key_warmup)
+        state = kernel.init(init_val, key_init)
 
         # Run the adaptation
-        last_states, parameters, _ = mclmc_adj.mclmc_find_L_and_step_size(
+        (last_states, parameters), _ = mclmc_adj.mclmc_find_L_and_step_size(
                                         mclmc_kernel=kernel,
                                         num_steps=args.n_warmup,
                                         state=state,
-                                        rng_key=key_warmup,
+                                        rng_key=key_tune,
         )
 
         # Extract the tuned parameters
