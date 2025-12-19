@@ -579,10 +579,12 @@ def main():
         initial_L = 1.0 
         initial_step_size = 1e-3
 
+        kernel = blackjax.mclmc(log_prob_fn, L=initial_L, step_size=initial_step_size)
+
         # Use the built-in Blackjax adaptation for MCLMC
         # This automatically handles the "Phase I/II/III" tuning for you
         warmup = mclmc_adj.mclmc_find_L_and_step_size(
-            logdensity_fn=log_prob_fn,
+            mclmc_kernel=kernel,
             num_steps=args.n_warmup,
             initial_step_size=initial_step_size,
             initial_L=initial_L
@@ -594,7 +596,7 @@ def main():
         # Extract the tuned parameters
         # parameters will now contain both 'L' and 'step_size'
         kernel = blackjax.mclmc(log_prob_fn, **parameters)
-        
+
         # kernel = blackjax.mclmc(log_prob_fn, step_size=1e-3)
         # state = kernel.init(init_val)
 
