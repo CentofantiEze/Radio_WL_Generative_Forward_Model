@@ -101,7 +101,12 @@ def draw_NN_profile(z, flux ,g1, g2, key, uv_pos, Npx, pixel_scale_radio, pixel_
     y = jitted_decode(z[None,:,:], key=key)
     
     # Interpolate Image to galsim object
-    y_gs = galsim.InterpolatedImage(galsim.Image(y[0], scale=pixel_scale_vae), gsparams=gsparams)
+    y_gs = galsim.InterpolatedImage(
+        galsim.Image(y[0], scale=pixel_scale_vae), 
+        gsparams=gsparams,
+        _force_stepk=2 * np.pi / (Npx * pixel_scale_vae),
+        _force_maxk=np.pi / pixel_scale_vae
+    )
     
     # Apply shear
     y_gs = y_gs.shear(g1=g1, g2=g2)
