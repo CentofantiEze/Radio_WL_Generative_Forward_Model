@@ -584,13 +584,15 @@ def main():
         key_init, key_tune = jax.random.split(key_warmup)
         key_init_chains = jax.random.split(key_init, args.num_chains)
 
-        def mclmc_factory(step_size, L, inverse_mass_matrix):
-            return blackjax.mclmc(
-                log_prob_fn,
-                step_size=step_size,
-                L=L,
-                inverse_mass_matrix=inverse_mass_matrix,
-            )
+        def mclmc_factory(step_size, L):
+            def kernel_builder(inverse_mass_matrix):
+                return blackjax.mclmc(
+                    log_prob_fn,
+                    step_size=step_size,
+                    L=L,
+                    inverse_mass_matrix=inverse_mass_matrix,
+                )
+            return kernel_builder
         
         inverse_mass_matrix = 1.0
         
