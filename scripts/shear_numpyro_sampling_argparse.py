@@ -592,8 +592,7 @@ def main():
                 inverse_mass_matrix=inverse_mass_matrix,
             )
         
-        dim = init_val.shape[-1]
-        inverse_mass_matrix = jnp.ones(dim)
+        inverse_mass_matrix = 1.0
         
         temp_kernel = blackjax.mclmc(
             log_prob_fn,
