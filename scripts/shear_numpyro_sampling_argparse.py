@@ -587,12 +587,13 @@ def main():
         def mclmc_factory(step_size):
             def kernel_L_builder(L):
                 def kernel_builder(inverse_mass_matrix):
-                    return blackjax.mclmc(
+                    kernel = blackjax.mclmc(
                         log_prob_fn,
                         step_size=step_size,
                         L=L,
                         inverse_mass_matrix=inverse_mass_matrix,
                     )
+                    return kernel.step
                 return kernel_builder
             return kernel_L_builder
         
