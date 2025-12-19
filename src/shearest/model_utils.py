@@ -127,7 +127,7 @@ def model_fn_VAE(
     flux_min=None,
     latent_dim=None,
     latent_mean=None,
-    autoencoder=None,
+    jitted_decode=None,
     key=None,
     gsparams=None,
     run_type="sequential",
@@ -168,9 +168,6 @@ def model_fn_VAE(
     # @eqx.filter_jit
     # def run_decode(model, z, key):
     #     return model.decode(z, key=key)
-    
-    # JIT the decode method to accelerate VAE inference
-    jitted_decode = eqx.filter_jit(lambda z, key: autoencoder.decode(z, key=key))
 
     # Create a partial function to bake in the static arguments for draw_NN_profile.
     # This is the key to avoiding the TypeError with JAX transformations.

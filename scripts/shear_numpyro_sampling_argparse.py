@@ -10,6 +10,7 @@ import numpy as np
 import numpyro
 import numpyro.distributions as dist
 import optax
+import equinox as eqx
 from einops import rearrange
 from numpyro.handlers import condition, seed, trace
 
@@ -366,6 +367,8 @@ def main():
         # load autoencoder
         VAE_PATH = Path(args.vae_path)
         ae = load_galaxy_autoencoder(VAE_PATH, epoch=args.vae_epoch)
+        # JIT the decode method to accelerate VAE inference
+        jitted_decode = eqx.filter_jit(lambda z, key: ae.decode(z, key=key))
         # 
         gsparams = galsim.GSParams(
             minimum_fft_size=128,
@@ -389,7 +392,7 @@ def main():
         flux_min=args.flux_prior_min,
         latent_dim=args.latent_dim,
         latent_mean=args.latent_mean,
-        autoencoder=ae,
+        jitted_decode=jitted_decode,
         key=subkey,
         gsparams=gsparams,
         run_type=args.vae_model_inference_mode,
