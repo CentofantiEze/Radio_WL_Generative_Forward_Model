@@ -1,4 +1,5 @@
 from functools import partial
+from xml.parsers.expat import model
 
 import jax
 import jax.numpy as jnp
@@ -6,6 +7,7 @@ import numpy as np
 import numpyro
 import numpyro.distributions as dist
 from jax import checkpoint
+import equinox as eqx
 
 from .data_gen_utils import draw_exp_profile, draw_spergel_profile, draw_NN_profile
 from .func_utils import to_unit_disk
@@ -163,8 +165,12 @@ def model_fn_VAE(
     if isinstance(subkeys, list):
         subkeys = jnp.stack(subkeys)
 
+    # @eqx.filter_jit
+    # def run_decode(model, z, key):
+    #     return model.decode(z, key=key)
+    
     # JIT the decode method to accelerate VAE inference
-    jitted_decode = jax.jit(autoencoder.decode)
+    jitted_decode = eqx.filter_jit(lambda z, key: autoencoder.decode(z, key=key))
 
     # Create a partial function to bake in the static arguments for draw_NN_profile.
     # This is the key to avoiding the TypeError with JAX transformations.
