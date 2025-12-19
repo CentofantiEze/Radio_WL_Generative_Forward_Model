@@ -11,6 +11,7 @@ import numpyro
 import numpyro.distributions as dist
 import optax
 import equinox as eqx
+import blackjax.adaptation.mclmc_adaptation as mclmc_adj
 from einops import rearrange
 from numpyro.handlers import condition, seed, trace
 
@@ -573,28 +574,49 @@ def main():
         kernel = blackjax.ghmc(log_prob_fn, **parameters)
 
     elif args.sampler == "mclmc":
-        kernel = blackjax.mclmc(log_prob_fn, step_size=1e-3)
-        state = kernel.init(init_val)
+        # Initialize the kernel (L is required here)
+        # If you don't have an estimate, a common starting value is 1.0 or the sqrt(dim)
+        initial_L = 1.0 
+        initial_step_size = 1e-3
 
-        da_init, da_update, da_final = blackjax.dual_averaging(
-            initial_step_size=1e-3,
-            target_acceptance_rate=None,
+        # Use the built-in Blackjax adaptation for MCLMC
+        # This automatically handles the "Phase I/II/III" tuning for you
+        warmup = mclmc_adj.mclmc_find_L_and_step_size(
+            logdensity_fn=log_prob_fn,
+            num_steps=args.n_warmup,
+            initial_step_size=initial_step_size,
+            initial_L=initial_L
         )
 
-        da_state = da_init()
+        # Run the adaptation
+        (last_states, parameters), _ = warmup.run(key_warmup, init_val)
 
-        for _ in range(args.n_warmup):
-            key_warmup, subkey = jax.random.split(key_warmup)
-            new_state, info = kernel.step(subkey, state)
-            log_energy_change = info.log_kinetic_energy_change
-            da_state = da_update(da_state, log_energy_change)
-            state = new_state
+        # Extract the tuned parameters
+        # parameters will now contain both 'L' and 'step_size'
+        kernel = blackjax.mclmc(log_prob_fn, **parameters)
         
-        step_size = da_final(da_state)
-        print("Step size:", step_size)
-        print(f"Step size: {step_size}", file=log_file)
+        # kernel = blackjax.mclmc(log_prob_fn, step_size=1e-3)
+        # state = kernel.init(init_val)
 
-        kernel = blackjax.mclmc(log_prob_fn, step_size=step_size)
+        # da_init, da_update, da_final = blackjax.dual_averaging(
+        #     initial_step_size=1e-3,
+        #     target_acceptance_rate=None,
+        # )
+
+        # da_state = da_init()
+
+        # for _ in range(args.n_warmup):
+        #     key_warmup, subkey = jax.random.split(key_warmup)
+        #     new_state, info = kernel.step(subkey, state)
+        #     log_energy_change = info.log_kinetic_energy_change
+        #     da_state = da_update(da_state, log_energy_change)
+        #     state = new_state
+        
+        # step_size = da_final(da_state)
+        # print("Step size:", step_size)
+        # print(f"Step size: {step_size}", file=log_file)
+
+        # kernel = blackjax.mclmc(log_prob_fn, step_size=step_size)
 
     else:
         raise ValueError("Sampler not recognized. Use ghmc or mclmc.")
