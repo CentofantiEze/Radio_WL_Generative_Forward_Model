@@ -163,6 +163,9 @@ def model_fn_VAE(
     if isinstance(subkeys, list):
         subkeys = jnp.stack(subkeys)
 
+    # JIT the decode method to accelerate VAE inference
+    jitted_decode = jax.jit(autoencoder.decode)
+
     # Create a partial function to bake in the static arguments for draw_NN_profile.
     # This is the key to avoiding the TypeError with JAX transformations.
     draw = partial(draw_NN_profile, 
@@ -170,7 +173,7 @@ def model_fn_VAE(
                    Npx=Npx, 
                    pixel_scale_radio=pixel_scale_radio, 
                    pixel_scale_vae=pixel_scale_vae, 
-                   autoencoder=autoencoder, 
+                   jitted_decode=jitted_decode, 
                    gsparams=gsparams)
 
     if run_type == "sequential":
