@@ -584,13 +584,23 @@ def main():
         key_init, key_tune = jax.random.split(key_warmup)
         key_init_chains = jax.random.split(key_init, args.num_chains)
 
-        mclmc_factory = lambda step_size, L, inverse_mass_matrix: blackjax.mclmc(
-            log_prob_fn, 
-            step_size=step_size, 
-            L=L, 
-            inverse_mass_matrix=inverse_mass_matrix
+        def mclmc_factory(step_size, L, inverse_mass_matrix):
+            return blackjax.mclmc(
+                log_prob_fn,
+                step_size=step_size,
+                L=L,
+                inverse_mass_matrix=inverse_mass_matrix,
+            )
+        
+        dim = init_val.shape[-1]
+        inverse_mass_matrix = jnp.ones(dim)
+        
+        temp_kernel = blackjax.mclmc(
+            log_prob_fn,
+            step_size=initial_step_size,
+            L=initial_L,
+            inverse_mass_matrix=inverse_mass_matrix,
         )
-        temp_kernel = blackjax.mclmc(log_prob_fn, step_size=1e-3, L=1.0)
         # state = temp_kernel.init(init_val, key_init)
         states = jax.vmap(temp_kernel.init)(init_val, key_init_chains)
 
