@@ -584,38 +584,43 @@ def main():
         key_init, key_tune = jax.random.split(key_warmup)
         key_init_chains = jax.random.split(key_init, args.num_chains)
 
-        def mclmc_factory(step_size, L):
-            def kernel(inverse_mass_matrix):
-                return blackjax.mclmc(
-                    log_prob_fn,
-                    step_size=step_size,
-                    L=L,
-                    inverse_mass_matrix=inverse_mass_matrix,
-                ).step
-            return kernel
-        
+        def mclmc_factory(inverse_mass_matrix):
+            return blackjax.mcmc.mclmc.build_kernel(
+                logdensity_fn=log_prob_fn,
+                inverse_mass_matrix=inverse_mass_matrix,
+                integrator=blackjax.mcmc.integrators.isokinetic_mclachlan,
+            )
+
         inverse_mass_matrix = 1.0
-        
+
         temp_kernel = blackjax.mclmc(
             log_prob_fn,
             step_size=initial_step_size,
             L=initial_L,
             inverse_mass_matrix=inverse_mass_matrix,
         )
-        # state = temp_kernel.init(init_val, key_init)
-        states = jax.vmap(temp_kernel.init)(init_val, key_init_chains)
 
-        # Run the adaptation
-        (last_states, parameters), _ = mclmc_adj.mclmc_find_L_and_step_size(
+        # Run adaptation on the first chain only (the API expects a single state)
+        first_chain_init = jax.tree.map(lambda x: x[0], init_val)
+        first_chain_state = temp_kernel.init(first_chain_init, key_init_chains[0])
+
+        adapted_state, parameters, _ = mclmc_adj.mclmc_find_L_and_step_size(
                                         mclmc_kernel=mclmc_factory,
                                         num_steps=args.n_warmup,
-                                        state=states,
+                                        state=first_chain_state,
                                         rng_key=key_tune,
         )
 
-        # Extract the tuned parameters
-        # parameters will now contain both 'L' and 'step_size'
-        kernel = blackjax.mclmc(log_prob_fn, **parameters)
+        print("Step size:", parameters.step_size)
+        print(f"Step size: {parameters.step_size}", file=log_file)
+        print("L:", parameters.L)
+        print(f"L: {parameters.L}", file=log_file)
+
+        # Build the final kernel with tuned parameters
+        kernel = blackjax.mclmc(log_prob_fn, **parameters._asdict())
+
+        # Initialize all chains with tuned kernel
+        last_states = jax.vmap(kernel.init)(init_val, key_init_chains)
 
         # kernel = blackjax.mclmc(log_prob_fn, step_size=1e-3)
         # state = kernel.init(init_val)
