@@ -669,7 +669,7 @@ def main():
 
     sample_list = []
 
-    keys = jax.vmap(jax.random.split, in_axes=(0, None))(key_chains, args.num)
+    keys = jax.vmap(jax.random.split, in_axes=(0, None))(key_chains, 2 * args.num)
 
     for i in range(args.num):
         print("Chain", i + 1, "of", 2 * args.num, "running...")
@@ -732,7 +732,7 @@ def main():
         print("Extra chain", args.num + i + 1, "of", 2 * args.num, "running...")
         last_states, (samples, info) = jax.vmap(
             lambda init_states, keys: run_hmc(init_states, keys, args.num_steps)
-        )(last_states, keys[:, i, :])
+        )(last_states, keys[:, args.num + i, :])
         sample_list.append(samples)
 
     # concatenates chains
