@@ -226,7 +226,13 @@ def main():
         "--num_steps", type=int, default=10000, help="Number of steps for sampling"
     )
     parser.add_argument(
-        "--save_samples", type=bool, default=False, help="Whether to save samples"
+        "--save_samples", action="store_true", default=False, help="Save MCMC samples (.npz)"
+    )
+    parser.add_argument(
+        "--save_plots", action="store_true", default=False, help="Save diagnostic plots (.png)"
+    )
+    parser.add_argument(
+        "--save_data", action="store_true", default=False, help="Save intermediate data (radio_data.npy, radio_psf_mask.npy, radio_init_val.npy, radio_map_val.npy)"
     )
     parser.add_argument(
         "--seed",
@@ -302,24 +308,25 @@ def main():
         uv_mask_weighting=args.uv_mask_weighting,
     )
 
-    plt.subplots(1, 3, figsize=(12, 4))
-    plt.subplot(131)
-    plt.imshow(np.real(mask))
-    plt.title("UV mask")
-    plt.colorbar()
-    plt.subplot(132)
-    plt.imshow(psf)
-    plt.title("Radio PSF")
-    plt.colorbar()
-    plt.subplot(133)
-    plt.imshow(
-        galsim.Gaussian(flux=1.0, sigma=0.2)
-        .drawImage(nx=args.Npx, ny=args.Npx, scale=args.pixel_scale)
-        .array
-    )
-    plt.title("Gaussian PSF")
-    plt.colorbar()
-    plt.savefig(os.path.join(out_dir, "radio_psf.png"))
+    if args.save_plots:
+        plt.subplots(1, 3, figsize=(12, 4))
+        plt.subplot(131)
+        plt.imshow(np.real(mask))
+        plt.title("UV mask")
+        plt.colorbar()
+        plt.subplot(132)
+        plt.imshow(psf)
+        plt.title("Radio PSF")
+        plt.colorbar()
+        plt.subplot(133)
+        plt.imshow(
+            galsim.Gaussian(flux=1.0, sigma=0.2)
+            .drawImage(nx=args.Npx, ny=args.Npx, scale=args.pixel_scale)
+            .array
+        )
+        plt.title("Gaussian PSF")
+        plt.colorbar()
+        plt.savefig(os.path.join(out_dir, "radio_psf.png"))
 
     # Init seed
     if args.seed is None:
@@ -358,9 +365,10 @@ def main():
     data, data_params = seeded_model_data_gen()
 
     # Save the data
-    np.save(os.path.join(out_dir, "radio_data.npy"), data)
-    np.save(os.path.join(out_dir, "radio_data_params.npy"), data_params)
-    np.save(os.path.join(out_dir, "radio_psf_mask.npy"), mask)
+    if args.save_data:
+        np.save(os.path.join(out_dir, "radio_data.npy"), data)
+        np.save(os.path.join(out_dir, "radio_data_params.npy"), data_params)
+        np.save(os.path.join(out_dir, "radio_psf_mask.npy"), mask)
 
     key, subkey = jax.random.split(key)
 
@@ -423,39 +431,40 @@ def main():
         )
     # seeded_model = seed(model, subkey)
 
-    # Plot 100 observations
-    data_complex = []
-    for vis in stack_2_complex(data, batch=True):
-        img_aux = np.zeros_like(mask)
-        img_aux[uv_pos] = vis
-        data_complex.append(img_aux)
-    if args.Ngal >= 100:
-        data_ = rearrange(data_complex[:100], "(n1 n2) h w -> (n1 h) (n2 w)", n1=10, n2=10)
-    else:
-        n1 = int(np.ceil(np.sqrt(args.Ngal)))
-        n2 = int(np.ceil(np.sqrt(args.Ngal)))
-        data_ = rearrange(data_complex[:int(n1*n2)], "(n1 n2) h w -> (n1 h) (n2 w)", n1=n1, n2=n2)
-    plt.figure(figsize=(10, 10))
-    plt.imshow(np.abs(data_), vmin=np.min(np.abs(data_)), vmax=np.max(np.abs(data_)))
-    print("Data shape:", data_.shape)
-    print("Data max:", np.max(np.abs(data_)))
-    print(f"Data max: {np.max(np.abs(data_))}", file=log_file)
-    plt.colorbar()
-    plt.savefig(os.path.join(out_dir, "radio_data.png"))
+    if args.save_plots:
+        # Plot 100 observations
+        data_complex = []
+        for vis in stack_2_complex(data, batch=True):
+            img_aux = np.zeros_like(mask)
+            img_aux[uv_pos] = vis
+            data_complex.append(img_aux)
+        if args.Ngal >= 100:
+            data_ = rearrange(data_complex[:100], "(n1 n2) h w -> (n1 h) (n2 w)", n1=10, n2=10)
+        else:
+            n1 = int(np.ceil(np.sqrt(args.Ngal)))
+            n2 = int(np.ceil(np.sqrt(args.Ngal)))
+            data_ = rearrange(data_complex[:int(n1*n2)], "(n1 n2) h w -> (n1 h) (n2 w)", n1=n1, n2=n2)
+        plt.figure(figsize=(10, 10))
+        plt.imshow(np.abs(data_), vmin=np.min(np.abs(data_)), vmax=np.max(np.abs(data_)))
+        print("Data shape:", data_.shape)
+        print("Data max:", np.max(np.abs(data_)))
+        print(f"Data max: {np.max(np.abs(data_))}", file=log_file)
+        plt.colorbar()
+        plt.savefig(os.path.join(out_dir, "radio_data.png"))
 
-    # Plot a random galaxy
-    plt.subplots(1, 2, figsize=(12, 4))
-    plt.subplot(121)
-    idx = np.random.randint(0, args.Ngal)
-    plt.imshow(np.abs(data_complex[idx]))
-    plt.title(f"Observed galaxy {idx} uv")
-    plt.colorbar()
-    plt.subplot(122)
-    plt.imshow(np.abs(np.fft.ifftshift(np.fft.ifft2(data_complex[idx]))))
-    plt.title(f"Observed galaxy {idx} image")
-    plt.colorbar()
-    plt.tight_layout()
-    plt.savefig(os.path.join(out_dir, "radio_data_galaxy.png"))
+        # Plot a random galaxy
+        plt.subplots(1, 2, figsize=(12, 4))
+        plt.subplot(121)
+        idx = np.random.randint(0, args.Ngal)
+        plt.imshow(np.abs(data_complex[idx]))
+        plt.title(f"Observed galaxy {idx} uv")
+        plt.colorbar()
+        plt.subplot(122)
+        plt.imshow(np.abs(np.fft.ifftshift(np.fft.ifft2(data_complex[idx]))))
+        plt.title(f"Observed galaxy {idx} image")
+        plt.colorbar()
+        plt.tight_layout()
+        plt.savefig(os.path.join(out_dir, "radio_data_galaxy.png"))
 
     # Sample parameters from their prior
     def draw_params(key):
@@ -464,7 +473,8 @@ def main():
 
     keys = jax.random.split(key, args.num_chains)[: args.num_chains]
     init_val_ = jax.vmap(draw_params)(keys)
-    np.save(os.path.join(out_dir, "radio_init_val.npy"), init_val_, allow_pickle=True)
+    if args.save_data:
+        np.save(os.path.join(out_dir, "radio_init_val.npy"), init_val_, allow_pickle=True)
 
     # Get the log prob of the joint distribution, conditioned on data
     @jax.jit
@@ -514,27 +524,29 @@ def main():
         f"Initial guess: g1={init_val['g1']*(args.g_scale/args.g_sigma)}, g2={init_val['g2']*(args.g_scale/args.g_sigma)}",
         file=log_file,
     )
-    np.save(os.path.join(out_dir, "radio_map_val.npy"), init_val, allow_pickle=True)
+    if args.save_data:
+        np.save(os.path.join(out_dir, "radio_map_val.npy"), init_val, allow_pickle=True)
 
-    # Plot the initial guess for the shear
-    plt.figure()
-    plt.scatter(
-        init_val_["g1"] * (args.g_scale / args.g_sigma),
-        init_val_["g2"] * (args.g_scale / args.g_sigma),
-        label="Initial guess",
-    )
-    plt.scatter(
-        init_val["g1"] * (args.g_scale / args.g_sigma),
-        init_val["g2"] * (args.g_scale / args.g_sigma),
-        label="MAP estimate",
-    )
-    plt.scatter(args.g1_true, args.g2_true, color="red", label="True shear")
-    plt.xlabel("g1")
-    plt.ylabel("g2")
-    plt.title("Initial guess for the shear")
-    plt.legend()
-    # plt.show()
-    plt.savefig(os.path.join(out_dir, "radio_initial_guess.png"))
+    if args.save_plots:
+        # Plot the initial guess for the shear
+        plt.figure()
+        plt.scatter(
+            init_val_["g1"] * (args.g_scale / args.g_sigma),
+            init_val_["g2"] * (args.g_scale / args.g_sigma),
+            label="Initial guess",
+        )
+        plt.scatter(
+            init_val["g1"] * (args.g_scale / args.g_sigma),
+            init_val["g2"] * (args.g_scale / args.g_sigma),
+            label="MAP estimate",
+        )
+        plt.scatter(args.g1_true, args.g2_true, color="red", label="True shear")
+        plt.xlabel("g1")
+        plt.ylabel("g2")
+        plt.title("Initial guess for the shear")
+        plt.legend()
+        # plt.show()
+        plt.savefig(os.path.join(out_dir, "radio_initial_guess.png"))
 
     # Use the the MEADS algorithm for parallel chains on GPUs
     """
@@ -566,11 +578,12 @@ def main():
             print(f"Set step size to: {parameters['step_size']}", file=log_file)
         print(parameters.keys(), file=log_file)
         print(parameters, file=log_file)
-        np.save(
-            os.path.join(out_dir, "radio_meads_warmup.npy"),
-            last_states.position,
-            allow_pickle=True,
-        )
+        if args.save_data:
+            np.save(
+                os.path.join(out_dir, "radio_meads_warmup.npy"),
+                last_states.position,
+                allow_pickle=True,
+            )
 
         kernel = blackjax.ghmc(log_prob_fn, **parameters)
 
@@ -772,97 +785,98 @@ def main():
     else:
         labels = ["hlr", "flux", "e1", "e2", "g1", "g2"]
 
-    fig, axes = plt.subplots(len(labels), figsize=(10, 7), sharex=True)
-    for i, label in enumerate(labels):
-        print(i, label)
-        ax = axes[i]
-        for k in range(args.num_chains):
-            # if label in ["g1", "g2"]:
-            #     ax.plot(samples_[label][k,:,0]*0.1, "k", alpha=0.3)
-            # else:
-            #     ax.plot(samples_[label][k,:,0], "k", alpha=0.3)
-            ax.plot(samples_[label][k, :, 0], "k", alpha=0.3)
-        ax.set_xlim(0, args.num_steps * args.num * 2)
-        ax.set_ylabel(label)
-        ax.yaxis.set_label_coords(-0.1, 0.5)
-    axes[-1].set_xlabel("step number")
-    if args.plot_chains in ["samples", "both"]:
-        plt.savefig(os.path.join(out_dir, "radio_chains.png"))
-    plt.close()
+    if args.save_plots:
+        fig, axes = plt.subplots(len(labels), figsize=(10, 7), sharex=True)
+        for i, label in enumerate(labels):
+            print(i, label)
+            ax = axes[i]
+            for k in range(args.num_chains):
+                # if label in ["g1", "g2"]:
+                #     ax.plot(samples_[label][k,:,0]*0.1, "k", alpha=0.3)
+                # else:
+                #     ax.plot(samples_[label][k,:,0], "k", alpha=0.3)
+                ax.plot(samples_[label][k, :, 0], "k", alpha=0.3)
+            ax.set_xlim(0, args.num_steps * args.num * 2)
+            ax.set_ylabel(label)
+            ax.yaxis.set_label_coords(-0.1, 0.5)
+        axes[-1].set_xlabel("step number")
+        if args.plot_chains in ["samples", "both"]:
+            plt.savefig(os.path.join(out_dir, "radio_chains.png"))
+        plt.close()
 
-    fig, axes = plt.subplots(len(labels), figsize=(10, 7), sharex=True)
-    for i, label in enumerate(labels):
-        ax = axes[i]
-        for k in range(args.num_chains):
-            if label == "hlr":
-                # hlr -> jax.nn.softplus(hlr + hlr_offset) * hlr_scale + hlr_min
-                ax.plot(
-                    jax.nn.sigmoid(samples_["hlr"][k, :, 0] / args.hlr_prior_sigma)
-                    * (args.hlr_prior_max - args.hlr_prior_min)
-                    + args.hlr_prior_min,
-                    "k",
-                    alpha=0.3,
-                )
-            if label == "flux":
-                # flux -> jax.nn.softplus(flux + flux_offset) * flux_scale + flux_min
-                ax.plot(
-                    jax.nn.sigmoid(samples_["flux"][k, :, 0] / args.flux_prior_sigma)
-                    * (args.flux_prior_max - args.flux_prior_min)
-                    + args.flux_prior_min,
-                    "k",
-                    alpha=0.3,
-                )
-            if label in ["e1", "e2"]:
-                #  e1, e2 -> to_unit_disk
-                e = jnp.stack(
-                    [
-                        samples_["e1"][k, :, 0] / args.ell_sigma * args.ell_scale,
-                        samples_["e2"][k, :, 0] / args.ell_sigma * args.ell_scale,
-                    ],
-                    0,
-                )
-                e = to_unit_disk(e)
-                if label == "e1":
-                    ax.plot(e[0], "k", alpha=0.3)
+        fig, axes = plt.subplots(len(labels), figsize=(10, 7), sharex=True)
+        for i, label in enumerate(labels):
+            ax = axes[i]
+            for k in range(args.num_chains):
+                if label == "hlr":
+                    # hlr -> jax.nn.softplus(hlr + hlr_offset) * hlr_scale + hlr_min
+                    ax.plot(
+                        jax.nn.sigmoid(samples_["hlr"][k, :, 0] / args.hlr_prior_sigma)
+                        * (args.hlr_prior_max - args.hlr_prior_min)
+                        + args.hlr_prior_min,
+                        "k",
+                        alpha=0.3,
+                    )
+                if label == "flux":
+                    # flux -> jax.nn.softplus(flux + flux_offset) * flux_scale + flux_min
+                    ax.plot(
+                        jax.nn.sigmoid(samples_["flux"][k, :, 0] / args.flux_prior_sigma)
+                        * (args.flux_prior_max - args.flux_prior_min)
+                        + args.flux_prior_min,
+                        "k",
+                        alpha=0.3,
+                    )
+                if label in ["e1", "e2"]:
+                    #  e1, e2 -> to_unit_disk
+                    e = jnp.stack(
+                        [
+                            samples_["e1"][k, :, 0] / args.ell_sigma * args.ell_scale,
+                            samples_["e2"][k, :, 0] / args.ell_sigma * args.ell_scale,
+                        ],
+                        0,
+                    )
+                    e = to_unit_disk(e)
+                    if label == "e1":
+                        ax.plot(e[0], "k", alpha=0.3)
+                    else:
+                        ax.plot(e[1], "k", alpha=0.3)
+                if label in ["g1", "g2"]:
+                    # g1, g2 -> to_unit_disk
+                    g = jnp.stack(
+                        [
+                            samples_["g1"][k, :, 0] / args.g_sigma * args.g_scale,
+                            samples_["g2"][k, :, 0] / args.g_sigma * args.g_scale,
+                        ],
+                        0,
+                    )
+                    g = to_unit_disk(g)
+                    if label == "g1":
+                        ax.plot(g[0], "k", alpha=0.3)
+                    else:
+                        ax.plot(g[1], "k", alpha=0.3)
                 else:
-                    ax.plot(e[1], "k", alpha=0.3)
-            if label in ["g1", "g2"]:
-                # g1, g2 -> to_unit_disk
-                g = jnp.stack(
-                    [
-                        samples_["g1"][k, :, 0] / args.g_sigma * args.g_scale,
-                        samples_["g2"][k, :, 0] / args.g_sigma * args.g_scale,
-                    ],
-                    0,
-                )
-                g = to_unit_disk(g)
-                if label == "g1":
-                    ax.plot(g[0], "k", alpha=0.3)
-                else:
-                    ax.plot(g[1], "k", alpha=0.3)
-            else:
-                pass
+                    pass
 
-        ax.set_xlim(0, args.num_steps * args.num * 2)
-        ax.set_ylabel(label)
-        ax.yaxis.set_label_coords(-0.1, 0.5)
-    axes[-1].set_xlabel("step number")
-    if args.plot_chains in ["scaled", "both"]:
-        plt.savefig(os.path.join(out_dir, "radio_chains_scaled.png"))
-    plt.close()
+            ax.set_xlim(0, args.num_steps * args.num * 2)
+            ax.set_ylabel(label)
+            ax.yaxis.set_label_coords(-0.1, 0.5)
+        axes[-1].set_xlabel("step number")
+        if args.plot_chains in ["scaled", "both"]:
+            plt.savefig(os.path.join(out_dir, "radio_chains_scaled.png"))
+        plt.close()
 
-    two_truths = np.array([args.g1_true, args.g2_true])
-    samples_g = np.concatenate([samples_["g1"], samples_["g2"]], -1).reshape(
-        (-1, 2)
-    ) * (args.g_scale / args.g_sigma)
+        two_truths = np.array([args.g1_true, args.g2_true])
+        samples_g = np.concatenate([samples_["g1"], samples_["g2"]], -1).reshape(
+            (-1, 2)
+        ) * (args.g_scale / args.g_sigma)
 
-    two_cols = ["g_1", "g_2"]
-    two_labels = [r"$\gamma_1$", r"$\gamma_2$"]
+        two_cols = ["g_1", "g_2"]
+        two_labels = [r"$\gamma_1$", r"$\gamma_2$"]
 
-    fig = plt.figure(figsize=(7, 7))
-    fig = corner.corner(samples_g, truths=two_truths, labels=two_labels, fig=fig)
-    fig.savefig(os.path.join(out_dir, "radio_corner_g.png"))
-    plt.close()
+        fig = plt.figure(figsize=(7, 7))
+        fig = corner.corner(samples_g, truths=two_truths, labels=two_labels, fig=fig)
+        fig.savefig(os.path.join(out_dir, "radio_corner_g.png"))
+        plt.close()
 
     print("ESS g1", blackjax.diagnostics.effective_sample_size(samples_["g1"][..., 0]))
     print("ESS g2", blackjax.diagnostics.effective_sample_size(samples_["g2"][..., 0]))
@@ -939,15 +953,16 @@ def main():
     print(f"GMM saved with {len(gmm_params['weights'])} components")
     print(f"GMM saved with {len(gmm_params['weights'])} components", file=log_file)
 
-    # Plot GMM contours
-    fig, ax = plt.subplots(1, 1, figsize=(6, 6))
-    plot_gmm_contours(
-        gmm_params, ax=ax,
-        true_g=(args.g1_true, args.g2_true),
-    )
-    ax.set_title("GMM Posterior Density")
-    fig.savefig(os.path.join(out_dir, "gmm_contours.png"), dpi=150, bbox_inches="tight")
-    plt.close(fig)
+    if args.save_plots:
+        # Plot GMM contours
+        fig, ax = plt.subplots(1, 1, figsize=(6, 6))
+        plot_gmm_contours(
+            gmm_params, ax=ax,
+            true_g=(args.g1_true, args.g2_true),
+        )
+        ax.set_title("GMM Posterior Density")
+        fig.savefig(os.path.join(out_dir, "gmm_contours.png"), dpi=150, bbox_inches="tight")
+        plt.close(fig)
 
     # Save samples
     if args.save_samples:
