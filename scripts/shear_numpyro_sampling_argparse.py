@@ -604,12 +604,29 @@ def main():
         first_chain_init = jax.tree.map(lambda x: x[0], init_val)
         first_chain_state = temp_kernel.init(first_chain_init, key_init_chains[0])
 
-        adapted_state, parameters, _ = mclmc_adj.mclmc_find_L_and_step_size(
-                                        mclmc_kernel=mclmc_factory,
-                                        num_steps=args.n_warmup,
-                                        state=first_chain_state,
-                                        rng_key=key_tune,
-        )
+        max_adapt_attempts = 3
+        for adapt_attempt in range(1, max_adapt_attempts + 1):
+            print(f"MCLMC adaptation attempt {adapt_attempt}/{max_adapt_attempts}...")
+            key_tune, key_retry = jax.random.split(key_tune)
+
+            adapted_state, parameters, _ = mclmc_adj.mclmc_find_L_and_step_size(
+                                            mclmc_kernel=mclmc_factory,
+                                            num_steps=args.n_warmup,
+                                            state=first_chain_state,
+                                            rng_key=key_retry,
+            )
+
+            if parameters.step_size > 0 and parameters.L > 0:
+                break
+            print(f"Adaptation failed (step_size={parameters.step_size}, L={parameters.L}), retrying...")
+
+        if parameters.step_size <= 0 or parameters.L <= 0:
+            msg = (f"MCLMC adaptation failed after {max_adapt_attempts} attempts: "
+                   f"step_size={parameters.step_size}, L={parameters.L}")
+            print(msg)
+            print(msg, file=log_file)
+            log_file.close()
+            raise RuntimeError(msg)
 
         print("Step size:", parameters.step_size)
         print(f"Step size: {parameters.step_size}", file=log_file)
