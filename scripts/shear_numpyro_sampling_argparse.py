@@ -35,6 +35,7 @@ from src.shearest.data_gen_utils import gen_gal_dataset
 from src.shearest.func_utils import stack_2_complex, to_unit_disk
 from src.shearest.model_utils import model_fn, model_fn_VAE
 from src.shearest.psf_utils import compute_radio_uv_mask
+from src.shearest.posterior_utils import fit_gmm, save_gmm, plot_gmm_contours
 
 from pshear.utils import load_galaxy_autoencoder # type: ignore
 
@@ -914,26 +915,24 @@ def main():
     print("Flatchains:", file=log_file)
     print(flatchain, file=log_file)
 
-    # Compute mean and std of the shear samples
+    # Compute posterior density estimation shear samples
     g1_scaled = samples_["g1"][np.where(flatchain == False),:]
     g2_scaled = samples_["g2"][np.where(flatchain == False),:]
     samples_g_scaled = np.concatenate([g1_scaled, g2_scaled], -1).reshape((-1,2)) / args.g_sigma * args.g_scale
-    g_mean = np.mean(samples_g_scaled, axis=0)
-    g_std = np.sqrt(np.diag(np.cov(samples_g_scaled, rowvar=False)))
-    print(f"Shear mean: g1={g_mean[0]}, g2={g_mean[1]}")
-    print(f"Shear std: g1={g_std[0]}, g2={g_std[1]}")
-    print(f"Shear mean: g1={g_mean[0]}, g2={g_mean[1]}", file=log_file)
-    print(f"Shear std: g1={g_std[0]}, g2={g_std[1]}", file=log_file)
-    np.savez(
-        os.path.join(out_dir, "radio_shear_stats.npz"),
-        g_mean=g_mean,
-        g_std=g_std,
-        flatchain=flatchain,
-    )
+    # g_mean = np.mean(samples_g_scaled, axis=0)
+    # g_std = np.sqrt(np.diag(np.cov(samples_g_scaled, rowvar=False)))
+    # print(f"Shear mean: g1={g_mean[0]}, g2={g_mean[1]}")
+    # print(f"Shear std: g1={g_std[0]}, g2={g_std[1]}")
+    # print(f"Shear mean: g1={g_mean[0]}, g2={g_mean[1]}", file=log_file)
+    # print(f"Shear std: g1={g_std[0]}, g2={g_std[1]}", file=log_file)
+    # np.savez(
+    #     os.path.join(out_dir, "radio_shear_stats.npz"),
+    #     g_mean=g_mean,
+    #     g_std=g_std,
+    #     flatchain=flatchain,
+    # )
 
     # Fit and save GMM posterior density
-    from src.shearest.posterior_utils import fit_gmm, save_gmm, plot_gmm_contours
-
     print("Fitting GMM to shear posterior...")
     gmm_params = fit_gmm(samples_g_scaled, n_components=5)
     save_gmm(gmm_params, os.path.join(out_dir, "radio_shear_gmm.npz"))
