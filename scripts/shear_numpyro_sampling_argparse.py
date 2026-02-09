@@ -931,6 +931,25 @@ def main():
         flatchain=flatchain,
     )
 
+    # Fit and save GMM posterior density
+    from src.shearest.posterior_utils import fit_gmm, save_gmm, plot_gmm_contours
+
+    print("Fitting GMM to shear posterior...")
+    gmm_params = fit_gmm(samples_g_scaled, n_components=5)
+    save_gmm(gmm_params, os.path.join(out_dir, "radio_shear_gmm.npz"))
+    print(f"GMM saved with {len(gmm_params['weights'])} components")
+    print(f"GMM saved with {len(gmm_params['weights'])} components", file=log_file)
+
+    # Plot GMM contours
+    fig, ax = plt.subplots(1, 1, figsize=(6, 6))
+    plot_gmm_contours(
+        gmm_params, ax=ax,
+        true_g=(args.g1_true, args.g2_true),
+    )
+    ax.set_title("GMM Posterior Density")
+    fig.savefig(os.path.join(out_dir, "gmm_contours.png"), dpi=150, bbox_inches="tight")
+    plt.close(fig)
+
     # Save samples
     if args.save_samples:
         print("Saving samples...")
