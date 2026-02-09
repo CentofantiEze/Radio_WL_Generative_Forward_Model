@@ -604,7 +604,7 @@ def main():
         first_chain_init = jax.tree.map(lambda x: x[0], init_val)
         first_chain_state = temp_kernel.init(first_chain_init, key_init_chains[0])
 
-        max_adapt_attempts = 3
+        max_adapt_attempts = 7
         for adapt_attempt in range(1, max_adapt_attempts + 1):
             print(f"MCLMC adaptation attempt {adapt_attempt}/{max_adapt_attempts}...")
             key_tune, key_retry = jax.random.split(key_tune)
