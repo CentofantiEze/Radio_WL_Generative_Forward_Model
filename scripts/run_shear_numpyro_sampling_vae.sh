@@ -84,7 +84,9 @@ args=(
     --num 20 
     --num_steps 5000 # 5000
     --id vae_cosmos_25
-    --save_samples True 
+    --save_samples
+    --save_plots
+    --save_data
     --output_dir /lustre/fswork/projects/rech/prk/uds36vp/repos/Radio_WL_Generative_Forward_Model/outputs
 )
 
