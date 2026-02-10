@@ -243,9 +243,12 @@ def combine_gmms_gaussian(gmm_list, prior_mean=None, prior_cov=None):
     prior_mean = np.asarray(prior_mean)
     prior_prec = np.linalg.inv(prior_cov)
 
+    import warnings
+
     # Start with the prior precision
     combined_prec = prior_prec.copy()
     combined_prec_mu = prior_prec @ prior_mean
+    n_skipped = 0
 
     for gmm in gmm_list:
         mu_i, cov_i = gmm_moments(gmm)
@@ -258,13 +261,21 @@ def combine_gmms_gaussian(gmm_list, prior_mean=None, prior_cov=None):
         eigvals = np.linalg.eigvalsh(lik_prec)
         if np.any(eigvals <= 0):
             # Posterior is wider than the prior (uninformative data)
-            # Skip this run's contribution
+            # Skip — contributes no information
+            n_skipped += 1
             continue
 
         lik_prec_mu = prec_i @ mu_i - prior_prec @ prior_mean
 
         combined_prec += lik_prec
         combined_prec_mu += lik_prec_mu
+
+    if n_skipped > 0:
+        warnings.warn(
+            f"combine_gmms_gaussian: {n_skipped}/{len(gmm_list)} posteriors "
+            f"wider than the prior (uninformative) — skipped.",
+            stacklevel=2,
+        )
 
     combined_cov = np.linalg.inv(combined_prec)
     combined_mean = combined_cov @ combined_prec_mu
@@ -310,9 +321,12 @@ def divide_gmm_by_gaussian(gmm_params, prior_mean, prior_cov):
     covs = gmm_params["covariances"].copy()
     K = len(weights)
 
+    import warnings
+
     new_means = np.zeros_like(means)
     new_covs = np.zeros_like(covs)
     log_weight_corrections = np.zeros(K)
+    n_skipped = 0
 
     for k in range(K):
         prec_k = np.linalg.inv(covs[k])
@@ -321,8 +335,11 @@ def divide_gmm_by_gaussian(gmm_params, prior_mean, prior_cov):
         # Check positive definiteness
         eigvals = np.linalg.eigvalsh(prec_new)
         if np.any(eigvals <= 0):
-            # Component is wider than the prior — keep it unchanged
-            # (this can happen for diffuse mixture components)
+            # Component is wider than the prior — data was uninformative
+            # for this component. Set its weight to ~0 so it doesn't
+            # contribute (a flat likelihood carries no information).
+            n_skipped += 1
+            log_weight_corrections[k] = -np.inf
             new_covs[k] = covs[k]
             new_means[k] = means[k]
             continue
@@ -344,6 +361,13 @@ def divide_gmm_by_gaussian(gmm_params, prior_mean, prior_cov):
             + mu_new @ prec_new @ mu_new
             - means[k] @ prec_k @ means[k]
             + prior_mean @ prior_prec @ prior_mean
+        )
+
+    if n_skipped > 0:
+        warnings.warn(
+            f"divide_gmm_by_gaussian: {n_skipped}/{K} components wider than "
+            f"the prior (uninformative) — dropped from likelihood.",
+            stacklevel=2,
         )
 
     # Apply weight corrections
