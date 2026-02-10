@@ -1,7 +1,7 @@
 """Gaussian Mixture Model utilities for shear posterior density estimation.
 
-Provides GMM fitting, serialization, analytical multiplication, and plotting
-for compact representation of 2D (g1, g2) shear posteriors.
+Provides GMM fitting, serialization, analytical multiplication, plotting,
+and posterior coverage testing for 2D (g1, g2) shear posteriors.
 """
 
 import numpy as np
@@ -172,8 +172,198 @@ def multiply_gmms(gmm1, gmm2, weight_threshold=1e-10):
     return {"weights": weights, "means": means, "covariances": covs}
 
 
-def combine_gmms(gmm_list, weight_threshold=1e-10, max_components=100):
+def gmm_moments(gmm_params):
+    """Compute the overall mean and covariance of a GMM.
+
+    Uses the law of total expectation/variance:
+        mu = sum_k w_k mu_k
+        Sigma = sum_k w_k (Sigma_k + (mu_k - mu)(mu_k - mu)^T)
+
+    Parameters
+    ----------
+    gmm_params : dict
+        GMM parameters.
+
+    Returns
+    -------
+    mean : ndarray, shape (d,)
+    cov : ndarray, shape (d, d)
+    """
+    weights = gmm_params["weights"]
+    means = gmm_params["means"]
+    covs = gmm_params["covariances"]
+
+    mu = np.average(means, weights=weights, axis=0)
+
+    # Covariance = weighted sum of (component cov + outer product of deviation)
+    d = means.shape[1]
+    cov = np.zeros((d, d))
+    for k in range(len(weights)):
+        diff = means[k] - mu
+        cov += weights[k] * (covs[k] + np.outer(diff, diff))
+
+    return mu, cov
+
+
+def combine_gmms_gaussian(gmm_list, prior_mean=None, prior_cov=None):
+    """Combine posteriors by Gaussian moment-matching.
+
+    Extracts the mean and covariance from each GMM (exact mixture moments),
+    then combines analytically as Gaussians. This avoids the tail truncation
+    problem of direct GMM multiplication.
+
+    The combination is:
+        Sigma_combined^{-1} = Sigma_prior^{-1} + sum_i Sigma_Li^{-1}
+        mu_combined = Sigma_combined (Sigma_prior^{-1} mu_prior + sum_i Sigma_Li^{-1} mu_Li)
+
+    where Sigma_Li^{-1} = Sigma_i^{-1} - Sigma_prior^{-1} is the likelihood
+    precision from run i.
+
+    Parameters
+    ----------
+    gmm_list : list of dict
+        List of GMM parameter dicts.
+    prior_mean : array_like, shape (d,), optional
+        Mean of the Gaussian prior. Default: zeros.
+    prior_cov : array_like, shape (d, d), optional
+        Covariance of the Gaussian prior. Required.
+
+    Returns
+    -------
+    dict
+        Single-component GMM dict with the combined posterior.
+    """
+    if prior_cov is None:
+        raise ValueError("prior_cov is required for Gaussian combination")
+
+    prior_cov = np.asarray(prior_cov)
+    d = prior_cov.shape[0]
+    if prior_mean is None:
+        prior_mean = np.zeros(d)
+    prior_mean = np.asarray(prior_mean)
+    prior_prec = np.linalg.inv(prior_cov)
+
+    # Start with the prior precision
+    combined_prec = prior_prec.copy()
+    combined_prec_mu = prior_prec @ prior_mean
+
+    for gmm in gmm_list:
+        mu_i, cov_i = gmm_moments(gmm)
+        prec_i = np.linalg.inv(cov_i)
+
+        # Likelihood precision = posterior precision - prior precision
+        lik_prec = prec_i - prior_prec
+
+        # Check positive definiteness
+        eigvals = np.linalg.eigvalsh(lik_prec)
+        if np.any(eigvals <= 0):
+            # Posterior is wider than the prior (uninformative data)
+            # Skip this run's contribution
+            continue
+
+        lik_prec_mu = prec_i @ mu_i - prior_prec @ prior_mean
+
+        combined_prec += lik_prec
+        combined_prec_mu += lik_prec_mu
+
+    combined_cov = np.linalg.inv(combined_prec)
+    combined_mean = combined_cov @ combined_prec_mu
+
+    return {
+        "weights": np.array([1.0]),
+        "means": combined_mean.reshape(1, -1),
+        "covariances": combined_cov.reshape(1, d, d),
+    }
+
+
+def divide_gmm_by_gaussian(gmm_params, prior_mean, prior_cov):
+    """Divide a GMM by a Gaussian (remove the prior from a posterior).
+
+    For each GMM component N(mu_k, Sigma_k), computes the "likelihood"
+    by removing the Gaussian prior:
+        Sigma_L = (Sigma_k^{-1} - Sigma_p^{-1})^{-1}
+        mu_L = Sigma_L (Sigma_k^{-1} mu_k - Sigma_p^{-1} mu_p)
+
+    This is valid when each component is narrower than the prior.
+
+    Parameters
+    ----------
+    gmm_params : dict
+        GMM parameter dict.
+    prior_mean : array_like, shape (d,)
+        Mean of the Gaussian prior.
+    prior_cov : array_like, shape (d, d)
+        Covariance of the Gaussian prior.
+
+    Returns
+    -------
+    dict
+        GMM with prior removed from each component.
+    """
+    prior_mean = np.asarray(prior_mean)
+    prior_cov = np.asarray(prior_cov)
+    prior_prec = np.linalg.inv(prior_cov)
+    d = len(prior_mean)
+
+    weights = gmm_params["weights"].copy()
+    means = gmm_params["means"].copy()
+    covs = gmm_params["covariances"].copy()
+    K = len(weights)
+
+    new_means = np.zeros_like(means)
+    new_covs = np.zeros_like(covs)
+    log_weight_corrections = np.zeros(K)
+
+    for k in range(K):
+        prec_k = np.linalg.inv(covs[k])
+        prec_new = prec_k - prior_prec
+
+        # Check positive definiteness
+        eigvals = np.linalg.eigvalsh(prec_new)
+        if np.any(eigvals <= 0):
+            # Component is wider than the prior — keep it unchanged
+            # (this can happen for diffuse mixture components)
+            new_covs[k] = covs[k]
+            new_means[k] = means[k]
+            continue
+
+        cov_new = np.linalg.inv(prec_new)
+        mu_new = cov_new @ (prec_k @ means[k] - prior_prec @ prior_mean)
+
+        new_covs[k] = cov_new
+        new_means[k] = mu_new
+
+        # Weight correction: ratio of normalizing constants
+        # log c = 0.5 * (log|Sigma_new| - log|Sigma_k| + log|Sigma_p|)
+        #       + 0.5 * (mu_new^T Prec_new mu_new - mu_k^T Prec_k mu_k + mu_p^T Prec_p mu_p)
+        log_det_new = np.linalg.slogdet(cov_new)[1]
+        log_det_k = np.linalg.slogdet(covs[k])[1]
+        log_det_p = np.linalg.slogdet(prior_cov)[1]
+        log_weight_corrections[k] = 0.5 * (
+            log_det_new - log_det_k + log_det_p
+            + mu_new @ prec_new @ mu_new
+            - means[k] @ prec_k @ means[k]
+            + prior_mean @ prior_prec @ prior_mean
+        )
+
+    # Apply weight corrections
+    log_weights = np.log(weights) + log_weight_corrections
+    log_weights -= np.max(log_weights)
+    new_weights = np.exp(log_weights)
+    new_weights /= np.sum(new_weights)
+
+    return {"weights": new_weights, "means": new_means, "covariances": new_covs}
+
+
+def combine_gmms(gmm_list, weight_threshold=1e-10, max_components=100,
+                 prior_mean=None, prior_cov=None):
     """Multiply a list of GMMs sequentially with pruning.
+
+    When prior_mean and prior_cov are provided, divides out (N-1) copies
+    of the prior to correct for the fact that each posterior already
+    includes the prior. Without this correction, combining N posteriors
+    applies the prior N times instead of once, leading to overconfident
+    results.
 
     Parameters
     ----------
@@ -184,6 +374,11 @@ def combine_gmms(gmm_list, weight_threshold=1e-10, max_components=100):
     max_components : int
         Maximum number of components to keep after each multiplication.
         The lowest-weight components are dropped if exceeded.
+    prior_mean : array_like, shape (d,), optional
+        Mean of the Gaussian prior on (g1, g2). If provided along with
+        prior_cov, divides out (N-1) copies of the prior.
+    prior_cov : array_like, shape (d, d), optional
+        Covariance of the Gaussian prior on (g1, g2).
 
     Returns
     -------
@@ -195,6 +390,39 @@ def combine_gmms(gmm_list, weight_threshold=1e-10, max_components=100):
     if len(gmm_list) == 1:
         return gmm_list[0]
 
+    # If prior is given, depriorize each posterior first (posterior / prior = likelihood)
+    # then multiply all likelihoods, then multiply by one copy of the prior
+    if prior_mean is not None and prior_cov is not None:
+        prior_mean = np.asarray(prior_mean)
+        prior_cov = np.asarray(prior_cov)
+        likelihood_list = [
+            divide_gmm_by_gaussian(gmm, prior_mean, prior_cov)
+            for gmm in gmm_list
+        ]
+        # Multiply all likelihoods
+        result = likelihood_list[0]
+        for lik in likelihood_list[1:]:
+            result = multiply_gmms(result, lik, weight_threshold=weight_threshold)
+            if len(result["weights"]) > max_components:
+                idx = np.argsort(result["weights"])[::-1][:max_components]
+                result = {
+                    "weights": result["weights"][idx],
+                    "means": result["means"][idx],
+                    "covariances": result["covariances"][idx],
+                }
+                result["weights"] /= np.sum(result["weights"])
+
+        # Multiply by one copy of the prior
+        prior_gmm = {
+            "weights": np.array([1.0]),
+            "means": prior_mean.reshape(1, -1),
+            "covariances": prior_cov.reshape(1, *prior_cov.shape),
+        }
+        result = multiply_gmms(result, prior_gmm, weight_threshold=weight_threshold)
+        result["weights"] /= np.sum(result["weights"])
+        return result
+
+    # No prior correction — original behavior
     result = gmm_list[0]
     for gmm in gmm_list[1:]:
         result = multiply_gmms(result, gmm, weight_threshold=weight_threshold)
@@ -283,4 +511,174 @@ def plot_gmm_contours(gmm_params, ax=None, levels=(0.68, 0.95), n_grid=200,
 
     ax.set_xlabel("g1")
     ax.set_ylabel("g2")
+    return ax
+
+
+# ---------------------------------------------------------------------------
+# Coverage testing
+# ---------------------------------------------------------------------------
+
+
+def credible_level_at_point(gmm_params, point, n_grid=300):
+    """Compute the credible level at which a point lies in the GMM posterior.
+
+    Returns the smallest highest-density credible region (as a fraction,
+    e.g. 0.68) that contains the given point. A value near 0 means the
+    point is at the mode; near 1 means it's deep in the tails.
+
+    Parameters
+    ----------
+    gmm_params : dict
+        GMM parameters.
+    point : array_like, shape (2,)
+        The point (g1, g2) to test.
+    n_grid : int
+        Grid resolution per axis. The grid adapts to the GMM extent.
+
+    Returns
+    -------
+    float
+        Credible level in [0, 1].
+    """
+    point = np.asarray(point).ravel()
+    means = gmm_params["means"]
+    covs = gmm_params["covariances"]
+    weights = gmm_params["weights"]
+
+    # Adaptive grid centered on the GMM, wide enough to cover tails
+    stds = np.sqrt(np.abs(covs[:, np.arange(2), np.arange(2)]))
+    spread = 5 * np.max(stds, axis=0)
+    center = np.average(means, weights=weights, axis=0)
+
+    g1_grid = np.linspace(center[0] - spread[0], center[0] + spread[0], n_grid)
+    g2_grid = np.linspace(center[1] - spread[1], center[1] + spread[1], n_grid)
+    G1, G2 = np.meshgrid(g1_grid, g2_grid)
+    grid_points = np.column_stack([G1.ravel(), G2.ravel()])
+
+    log_density_grid = gmm_log_prob(gmm_params, grid_points)
+    log_density_true = gmm_log_prob(gmm_params, point.reshape(1, 2))[0]
+
+    # Credible level = fraction of probability mass at density >= density_true
+    density_grid = np.exp(log_density_grid - np.max(log_density_grid))
+    density_true = np.exp(log_density_true - np.max(log_density_grid))
+
+    credible_level = np.sum(density_grid[density_grid >= density_true]) / np.sum(
+        density_grid
+    )
+    return float(credible_level)
+
+
+def compute_coverage(gmm_list, true_g, n_grid=300):
+    """Compute credible levels for a list of posteriors at the same true value.
+
+    Parameters
+    ----------
+    gmm_list : list of dict
+        List of GMM parameter dicts, one per independent posterior estimate.
+    true_g : array_like, shape (2,)
+        True shear value (g1, g2).
+    n_grid : int
+        Grid resolution for credible level computation.
+
+    Returns
+    -------
+    ndarray, shape (N,)
+        Credible level for each posterior.
+    """
+    true_g = np.asarray(true_g)
+    credible_levels = np.array(
+        [credible_level_at_point(gmm, true_g, n_grid=n_grid) for gmm in gmm_list]
+    )
+    return credible_levels
+
+
+def coverage_table(credible_levels, nominal_levels=None):
+    """Compute empirical coverage at nominal credible levels.
+
+    Parameters
+    ----------
+    credible_levels : array_like, shape (N,)
+        Credible level of the true value in each posterior.
+    nominal_levels : list of float, optional
+        Nominal levels to evaluate. Default: [0.5, 0.68, 0.8, 0.9, 0.95, 0.99].
+
+    Returns
+    -------
+    dict
+        Keys: 'nominal', 'empirical', 'se', 'n'. Each is an array.
+    """
+    if nominal_levels is None:
+        nominal_levels = [0.50, 0.68, 0.80, 0.90, 0.95, 0.99]
+
+    credible_levels = np.asarray(credible_levels)
+    N = len(credible_levels)
+
+    empirical = np.array([np.mean(credible_levels <= level) for level in nominal_levels])
+    se = np.sqrt(empirical * (1 - empirical) / N)
+
+    return {
+        "nominal": np.array(nominal_levels),
+        "empirical": empirical,
+        "se": se,
+        "n": N,
+    }
+
+
+def plot_coverage(credible_levels, ax=None, n_sigma=2, label=None, color="steelblue"):
+    """Plot empirical coverage vs nominal confidence level.
+
+    A well-calibrated posterior lies on the 1:1 diagonal. The shaded
+    band shows the expected n_sigma binomial uncertainty.
+
+    Parameters
+    ----------
+    credible_levels : array_like, shape (N,)
+        Credible level of the true value in each posterior.
+    ax : matplotlib Axes, optional
+        Axes to plot on. If None, creates a new figure.
+    n_sigma : int
+        Width of the confidence band in standard deviations.
+    label : str, optional
+        Label for the curve.
+    color : str
+        Color of the coverage curve.
+
+    Returns
+    -------
+    matplotlib Axes
+    """
+    import matplotlib.pyplot as plt
+
+    if ax is None:
+        _, ax = plt.subplots(1, 1, figsize=(6, 6))
+
+    credible_levels = np.asarray(credible_levels)
+    N = len(credible_levels)
+
+    # Empirical coverage: for each nominal level p, fraction of runs
+    # where credible_level <= p
+    nominal = np.linspace(0, 1, 200)
+    empirical = np.array([np.mean(credible_levels <= p) for p in nominal])
+
+    # Binomial confidence band around the diagonal
+    se = np.sqrt(nominal * (1 - nominal) / N)
+    ax.fill_between(
+        nominal,
+        nominal - n_sigma * se,
+        nominal + n_sigma * se,
+        alpha=0.15,
+        color="gray",
+        label=f"${n_sigma}\\sigma$ band (N={N})",
+    )
+
+    ax.plot([0, 1], [0, 1], "k--", alpha=0.5, label="Ideal")
+    ax.plot(nominal, empirical, color=color, lw=1.5, label=label)
+
+    ax.set_xlabel("Nominal confidence level")
+    ax.set_ylabel("Empirical coverage")
+    ax.set_xlim(0, 1)
+    ax.set_ylim(0, 1)
+    ax.set_aspect("equal")
+    ax.legend()
+
     return ax
