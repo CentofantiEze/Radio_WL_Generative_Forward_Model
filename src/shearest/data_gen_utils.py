@@ -96,33 +96,89 @@ def draw_HST_profiles(Ngal, dataset_dir, flux_batch, g1, g2, uv_pos, Npx, pixel_
         im_gal.append(complex_2_stack(vis))
     return jnp.array(im_gal), indices
 
-def draw_NN_profile(z, flux ,g1, g2, key, uv_pos, Npx, pixel_scale_radio, pixel_scale_vae=0.03, jitted_decode=None, gsparams=None):
+def apply_shear(image, g1, g2, order=1):
+    """Apply area-preserving shear to an image via inverse coordinate mapping.
+
+    For reduced shear g = (g1, g2), the inverse shear matrix is:
+        S^{-1} = 1/sqrt(1-|g|^2) * [[1-g1, -g2], [-g2, 1+g1]]
+    For each output pixel, we find its source coordinate and interpolate.
+
+    Args:
+        image: 2D array (Ny, Nx).
+        g1, g2: Reduced shear components.
+        order: Interpolation order (1=bilinear, 3=bicubic).
+
+    Returns:
+        Sheared image, same shape as input.
+    """
+    ny, nx = image.shape
+    cy, cx = (ny - 1) / 2.0, (nx - 1) / 2.0
+
+    iy, ix = jnp.meshgrid(jnp.arange(ny), jnp.arange(nx), indexing='ij')
+    dy = iy - cy
+    dx = ix - cx
+
+    g_sq = g1**2 + g2**2
+    inv_sqrt = 1.0 / jnp.sqrt(1.0 - g_sq)
+    dx_src = ((1 - g1) * dx - g2 * dy) * inv_sqrt
+    dy_src = (-g2 * dx + (1 + g1) * dy) * inv_sqrt
+
+    coords = jnp.stack([dy_src + cy, dx_src + cx])
+    return jax.scipy.ndimage.map_coordinates(image, coords, order=order, mode='constant')
+
+
+def image_to_kimage(image, pixel_scale, Npx_out, pixel_scale_out):
+    """Zero-pad a real-space image and FFT to produce a k-space image.
+
+    The output k-image has shape (Npx_out, Npx_out) with k-grid spacing
+    dk = 2*pi / (Npx_out * pixel_scale_out).
+
+    Args:
+        image: 2D array (Ny, Nx) in surface brightness units (flux/area).
+        pixel_scale: Pixel scale of the input image (arcsec/pixel).
+        Npx_out: Side length of the output k-image.
+        pixel_scale_out: Pixel scale defining the output k-grid spacing.
+
+    Returns:
+        Complex 2D array (Npx_out, Npx_out) — the Fourier transform of the
+        image, following the GalSim convention I_k = integral I(x) exp(-i k.x) dx.
+    """
+    ny, nx = image.shape
+
+    # Zero-pad so the FFT dk matches the desired output dk.
+    # dk_native = 2*pi / (ny * pixel_scale)
+    # dk_out    = 2*pi / (Npx_out * pixel_scale_out)
+    # N_pad     = Npx_out * pixel_scale_out / pixel_scale
+    N_pad = round(Npx_out * pixel_scale_out / pixel_scale)
+
+    pad_y = (N_pad - ny) // 2
+    pad_x = (N_pad - nx) // 2
+    y_padded = jnp.pad(image,
+                       ((pad_y, N_pad - ny - pad_y),
+                        (pad_x, N_pad - nx - pad_x)))
+
+    # FFT with GalSim normalization (continuous FT approximation)
+    y_k = jnp.fft.fftshift(jnp.fft.fft2(jnp.fft.ifftshift(y_padded))) * pixel_scale**2
+
+    # Extract the central Npx_out x Npx_out region
+    start = (N_pad - Npx_out) // 2
+    return y_k[start:start+Npx_out, start:start+Npx_out]
+
+
+def draw_NN_profile(z, flux, g1, g2, key, uv_pos, Npx, pixel_scale_radio, pixel_scale_vae=0.03, jitted_decode=None, gsparams=None):
     # Decode the latent vector to get the galaxy image
-    y = jitted_decode(z[None,:,:], key=key)
-    
-    # Interpolate Image to galsim object
-    y_gs = galsim.InterpolatedImage(
-        galsim.Image(y[0], scale=pixel_scale_vae), 
-        gsparams=gsparams,
-        _force_stepk=2 * np.pi / (Npx * pixel_scale_vae),
-        _force_maxk=np.pi / pixel_scale_vae
-    )
-    
-    # Apply shear
-    y_gs = y_gs.shear(g1=g1, g2=g2)
-    
-    # Set flux
-    y_gs = y_gs.withFlux(flux)
-    
-    # Draw kimage
-    y_kimage = y_gs.drawKImage(nx=Npx, ny=Npx, scale=2*np.pi/pixel_scale_radio/Npx)
-    
-    # Get array
-    y_kimage_array = y_kimage.array
-    
-    # Sample visibilities
-    vis = y_kimage_array[uv_pos]
-    
+    y = jitted_decode(z[None,:,:], key=key)[0]  # (Ny, Nx)
+
+    # Normalize to desired flux: total flux = sum(I) * pixel_scale^2
+    y = y * flux / (jnp.sum(y) * pixel_scale_vae**2)
+
+    # Apply shear in image space
+    y_sheared = apply_shear(y, g1, g2)
+
+    # FFT to k-space at radio resolution and sample visibilities
+    y_kimage = image_to_kimage(y_sheared, pixel_scale_vae, Npx, pixel_scale_radio)
+    vis = y_kimage[uv_pos]
+
     return complex_2_stack(vis)
 
 def sample_galaxy_params(
