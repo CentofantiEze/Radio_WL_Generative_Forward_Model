@@ -128,7 +128,6 @@ def model_fn_VAE(
     latent_dim=None,
     latent_mean=None,
     jitted_decode=None,
-    key=None,
     gsparams=None,
     run_type="sequential",
     batch_size=1
@@ -153,17 +152,11 @@ def model_fn_VAE(
     flux_z = numpyro.sample("flux", dist.Normal(jnp.zeros((Ngal,)), flux_sigma * jnp.ones((Ngal,))))
     flux = flux_min + jax.nn.sigmoid(flux_z / flux_sigma) * (flux_max - flux_min)
 
-    # A key must be provided for the VAE model.
-    if key is None:
-        raise ValueError("model_fn_VAE requires a 'key' argument for autoencoder decoding.")
+    # Fresh RNG key from numpyro's PRNG context (varies per MCMC step)
+    key = numpyro.prng_key()
 
     # Random keys for autoencoder decoding
     subkeys = split(key, Ngal)
-
-    # The TracerIntegerConversionError suggests `subkeys` may be a list of arrays.
-    # Stacking them into a single JAX array ensures compatibility with `lax.scan` and `vmap`.
-    if isinstance(subkeys, list):
-        subkeys = jnp.stack(subkeys)
 
     # @eqx.filter_jit
     # def run_decode(model, z, key):
@@ -199,8 +192,11 @@ def model_fn_VAE(
             g = jnp.pad(g, ((0, 0), (0, pad_size)), mode='constant')
         
         num_batches = z.shape[0] // batch_size
-        subkeys = split(key, num_batches)
-        
+        # Pad subkeys to match padded galaxy count, then reshape for batching
+        if pad_size > 0:
+            subkeys = jnp.pad(subkeys, ((0, pad_size), (0, 0)), mode='constant')
+        subkeys_batched = subkeys.reshape((num_batches, batch_size, -1))
+
         # Reshape for batching
         z_batched = z.reshape((num_batches, batch_size, latent_dim, latent_dim))
         flux_batched = flux.reshape((num_batches, batch_size))
@@ -210,12 +206,11 @@ def model_fn_VAE(
         vmapped_draw = jax.vmap(draw)
 
         def batch_scan_body(carry, batch_inputs):
-            z_b, flux_b, g_b, subkeys = batch_inputs
-            keysbatch = split(subkeys, batch_size)
-            im_gal_batch = vmapped_draw(z_b, flux_b, g_b[0], g_b[1], keysbatch)
+            z_b, flux_b, g_b, keys_b = batch_inputs
+            im_gal_batch = vmapped_draw(z_b, flux_b, g_b[0], g_b[1], keys_b)
             return carry, im_gal_batch
 
-        scan_inputs = (z_batched, flux_batched, g_scan_inp, subkeys)
+        scan_inputs = (z_batched, flux_batched, g_scan_inp, subkeys_batched)
         _, im_gal_batched = jax.lax.scan(batch_scan_body, None, scan_inputs)
 
         # Reshape and truncate padding
