@@ -52,12 +52,12 @@ def save_gmm(gmm_params, filepath):
 
 def load_gmm(filepath):
     """Load GMM parameters from a .npz file."""
-    data = np.load(filepath)
-    return {
-        "weights": data["weights"],
-        "means": data["means"],
-        "covariances": data["covariances"],
-    }
+    with np.load(filepath) as data:
+        return {
+            "weights": data["weights"].copy(),
+            "means": data["means"].copy(),
+            "covariances": data["covariances"].copy(),
+        }
 
 
 def gmm_log_prob(gmm_params, points):
