@@ -403,7 +403,6 @@ def main():
         latent_dim=args.latent_dim,
         latent_mean=args.latent_mean,
         jitted_decode=jitted_decode,
-        key=subkey,
         gsparams=gsparams,
         run_type=args.vae_model_inference_mode,
         batch_size=args.vae_inference_batch_size
@@ -476,11 +475,16 @@ def main():
     if args.save_data:
         np.save(os.path.join(out_dir, "radio_init_val.npy"), init_val_, allow_pickle=True)
 
-    # Get the log prob of the joint distribution, conditioned on data
+    # Get the log prob of the joint distribution, conditioned on data.
+    # Seed the model with a fixed key so the log density is deterministic
+    # (required for gradient-based MCMC). This provides the PRNG context
+    # needed by numpyro.prng_key() inside model_fn_VAE.
+    seeded_model = seed(model, jax.random.PRNGKey(0))
+
     @jax.jit
     def log_prob_fn(params):
         return numpyro.infer.util.log_density(
-            model,
+            seeded_model,
             (),
             {
                 "obs": data,
@@ -588,15 +592,15 @@ def main():
         kernel = blackjax.ghmc(log_prob_fn, **parameters)
 
     elif args.sampler == "mclmc":
-        # Initialize the kernel (L is required here)
-        # If you don't have an estimate, a common starting value is 1.0 or the sqrt(dim)
-        initial_L = 1.0 
-        initial_step_size = 1e-3
-
-        # kernel = blackjax.mclmc(log_prob_fn, L=initial_L, step_size=initial_step_size)
-        
         key_init, key_tune = jax.random.split(key_warmup)
         key_init_chains = jax.random.split(key_init, args.num_chains)
+
+        # Compute dimensionality for initial L and step_size heuristics
+        first_chain_init = jax.tree.map(lambda x: x[0], init_val)
+        ndim = sum(v.size for v in jax.tree.leaves(first_chain_init))
+        initial_L = jnp.sqrt(float(ndim))
+        initial_step_size = initial_L / ndim
+        print(f"MCLMC init: ndim={ndim}, initial_L={initial_L:.2f}, initial_step_size={initial_step_size:.4f}")
 
         def mclmc_factory(inverse_mass_matrix):
             return blackjax.mcmc.mclmc.build_kernel(
@@ -615,7 +619,6 @@ def main():
         )
 
         # Run adaptation on the first chain only (the API expects a single state)
-        first_chain_init = jax.tree.map(lambda x: x[0], init_val)
         first_chain_state = temp_kernel.init(first_chain_init, key_init_chains[0])
 
         max_adapt_attempts = 10
