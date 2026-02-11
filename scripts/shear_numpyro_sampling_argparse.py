@@ -499,9 +499,26 @@ def main():
     print(f"MAP learning rate: {args.lr_map}", file=log_file)
     print(f"MAP number of steps: {args.n_steps_map}", file=log_file)
 
-    # find the MAP for chain initialization
-    nll = lambda params: -log_prob_fn(params)
+    # For VAE with fix_latent: condition g1=g2=0 during MAP so z doesn't absorb shear
+    if args.model_profile == "VAE" and args.fix_latent:
+        map_model = condition(model, {"g1": jnp.zeros(1), "g2": jnp.zeros(1)})
+        seeded_map_model = seed(map_model, jax.random.PRNGKey(0))
 
+        @jax.jit
+        def map_log_prob_fn(params):
+            return numpyro.infer.util.log_density(
+                seeded_map_model, (), {"obs": data}, params,
+            )[0]
+
+        # Remove g1, g2 from init values for MAP
+        map_init_val = {k: v for k, v in init_val_.items() if k not in ("g1", "g2")}
+        nll = lambda params: -map_log_prob_fn(params)
+        print("MAP: conditioning g1=g2=0, optimizing only z and flux")
+    else:
+        map_init_val = init_val_
+        nll = lambda params: -log_prob_fn(params)
+
+    # find the MAP for chain initialization
     def find_map(init_params):
         start_learning_rate = args.lr_map
         optimizer = optax.adafactor(start_learning_rate)
@@ -521,8 +538,14 @@ def main():
         )
 
         return params
-    
-    init_val = jax.vmap(find_map)(init_val_)
+
+    map_result = jax.vmap(find_map)(map_init_val)
+
+    # Restore g1, g2 from prior samples for MCMC initialization
+    if args.model_profile == "VAE" and args.fix_latent:
+        init_val = {**map_result, "g1": init_val_["g1"], "g2": init_val_["g2"]}
+    else:
+        init_val = map_result
 
     print(
         init_val["g1"] * (args.g_scale / args.g_sigma),
