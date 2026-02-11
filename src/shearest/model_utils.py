@@ -130,7 +130,8 @@ def model_fn_VAE(
     jitted_decode=None,
     gsparams=None,
     run_type="sequential",
-    batch_size=1
+    batch_size=1,
+    use_dropout=False,
 ):
     z = numpyro.sample("z", dist.Normal(jnp.zeros((Ngal ,latent_dim, latent_dim)), jnp.ones((Ngal ,latent_dim, latent_dim)))) + latent_mean
 
@@ -152,11 +153,12 @@ def model_fn_VAE(
     flux_z = numpyro.sample("flux", dist.Normal(jnp.zeros((Ngal,)), flux_sigma * jnp.ones((Ngal,))))
     flux = flux_min + jax.nn.sigmoid(flux_z / flux_sigma) * (flux_max - flux_min)
 
-    # Fresh RNG key from numpyro's PRNG context (varies per MCMC step)
-    key = numpyro.prng_key()
-
-    # Random keys for autoencoder decoding
-    subkeys = split(key, Ngal)
+    # key=None disables dropout in pshear's ResBlocks (split(None, N) returns [None]*N)
+    if use_dropout:
+        key = numpyro.prng_key()
+        subkeys = split(key, Ngal)
+    else:
+        subkeys = split(None, Ngal)
 
     # @eqx.filter_jit
     # def run_decode(model, z, key):

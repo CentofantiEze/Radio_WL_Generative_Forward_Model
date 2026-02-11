@@ -204,6 +204,7 @@ def main():
     parser.add_argument("--vae_epoch", type=int, default=None, help="Epoch of the trained VAE model.")
     parser.add_argument("--vae_model_inference_mode", type=str, default="parallel", help="VAE model inference mode: parallel, sequential or batch.")
     parser.add_argument("--vae_inference_batch_size", type=int, default=1, help="VAE inference batch size if using batch mode.")
+    parser.add_argument("--use_dropout", action="store_true", help="Enable VAE dropout during inference (disabled by default for deterministic decoding).")
     parser.add_argument("--pixel_scale_vae", type=float, default=0.03, help="Pixel scale for VAE images, default: HST pixel scale (0.03 arcsec/pixel).")
     parser.add_argument("--lr_map", type=float, default=1e-2, help="MAP learning rate")
     parser.add_argument(
@@ -405,7 +406,8 @@ def main():
         jitted_decode=jitted_decode,
         gsparams=gsparams,
         run_type=args.vae_model_inference_mode,
-        batch_size=args.vae_inference_batch_size
+        batch_size=args.vae_inference_batch_size,
+        use_dropout=args.use_dropout,
     )
     else:
         model = partial(
