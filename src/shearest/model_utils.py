@@ -153,12 +153,12 @@ def model_fn_VAE(
     flux_z = numpyro.sample("flux", dist.Normal(jnp.zeros((Ngal,)), flux_sigma * jnp.ones((Ngal,))))
     flux = flux_min + jax.nn.sigmoid(flux_z / flux_sigma) * (flux_max - flux_min)
 
-    # key=None disables dropout in pshear's ResBlocks (split(None, N) returns [None]*N)
     if use_dropout:
         key = numpyro.prng_key()
         subkeys = split(key, Ngal)
     else:
-        subkeys = split(None, Ngal)
+        # Dummy keys as placeholder array for scan/vmap; draw_NN_profile will pass None to decoder
+        subkeys = jnp.zeros((Ngal, 2), dtype=jnp.uint32)
 
     # @eqx.filter_jit
     # def run_decode(model, z, key):
@@ -166,13 +166,14 @@ def model_fn_VAE(
 
     # Create a partial function to bake in the static arguments for draw_NN_profile.
     # This is the key to avoiding the TypeError with JAX transformations.
-    draw = partial(draw_NN_profile, 
-                   uv_pos=uv_pos, 
-                   Npx=Npx, 
-                   pixel_scale_radio=pixel_scale_radio, 
-                   pixel_scale_vae=pixel_scale_vae, 
-                   jitted_decode=jitted_decode, 
-                   gsparams=gsparams)
+    draw = partial(draw_NN_profile,
+                   uv_pos=uv_pos,
+                   Npx=Npx,
+                   pixel_scale_radio=pixel_scale_radio,
+                   pixel_scale_vae=pixel_scale_vae,
+                   jitted_decode=jitted_decode,
+                   gsparams=gsparams,
+                   use_dropout=use_dropout)
 
     if run_type == "sequential":
         def scan_body(carry, sliced_inputs):

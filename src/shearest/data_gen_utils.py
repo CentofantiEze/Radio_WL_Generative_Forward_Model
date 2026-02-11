@@ -165,9 +165,9 @@ def image_to_kimage(image, pixel_scale, Npx_out, pixel_scale_out):
     return y_k[start:start+Npx_out, start:start+Npx_out]
 
 
-def draw_NN_profile(z, flux, g1, g2, key, uv_pos, Npx, pixel_scale_radio, pixel_scale_vae=0.03, jitted_decode=None, gsparams=None):
+def draw_NN_profile(z, flux, g1, g2, key, uv_pos, Npx, pixel_scale_radio, pixel_scale_vae=0.03, jitted_decode=None, gsparams=None, use_dropout=False):
     # Decode the latent vector to get the galaxy image
-    y = jitted_decode(z[None,:,:], key=key)[0]  # (Ny, Nx)
+    y = jitted_decode(z[None,:,:], key=key if use_dropout else None)[0]  # (Ny, Nx)
 
     # Normalize to desired flux: total flux = sum(I) * pixel_scale^2
     y = y * flux / (jnp.sum(y) * pixel_scale_vae**2)
