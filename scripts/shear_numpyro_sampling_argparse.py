@@ -387,7 +387,11 @@ def main():
             )
             print("VAE decoder converted to float16")
         # JIT the decode method to accelerate VAE inference
-        jitted_decode = eqx.filter_jit(lambda z, key: ae.decode(z, key=key))
+        # Cast input z to match decoder weight precision (float16 weights require float16 input)
+        if args.vae_precision == "float16":
+            jitted_decode = eqx.filter_jit(lambda z, key: ae.decode(z.astype(jnp.float16), key=key))
+        else:
+            jitted_decode = eqx.filter_jit(lambda z, key: ae.decode(z, key=key))
         # 
         gsparams = galsim.GSParams(
             minimum_fft_size=128,
