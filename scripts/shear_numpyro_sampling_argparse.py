@@ -206,6 +206,7 @@ def main():
     parser.add_argument("--vae_inference_batch_size", type=int, default=1, help="VAE inference batch size if using batch mode.")
     parser.add_argument("--use_dropout", action="store_true", help="Enable VAE dropout during inference (disabled by default for deterministic decoding).")
     parser.add_argument("--vae_precision", type=str, default="float16", choices=["float32", "float16"], help="VAE decoder weight precision. float16 gives ~2x speedup on V100 GPU.")
+    parser.add_argument("--fix_latent", action="store_true", help="Fix VAE latent codes at MAP values and only sample g1, g2, flux.")
     parser.add_argument("--pixel_scale_vae", type=float, default=0.03, help="Pixel scale for VAE images, default: HST pixel scale (0.03 arcsec/pixel).")
     parser.add_argument("--lr_map", type=float, default=1e-2, help="MAP learning rate")
     parser.add_argument(
@@ -585,6 +586,19 @@ def main():
             batch_size=args.vae_inference_batch_size,
             use_dropout=args.use_dropout,
         )
+        print("VAE decoder converted to float16 for MCMC")
+
+    # Optionally fix latent codes at MAP values (sample only g1, g2, flux)
+    if args.model_profile == "VAE" and args.fix_latent:
+        z_map = init_val["z"][0]
+        print(f"Fixing latent codes at MAP values (z shape: {z_map.shape})")
+        print(f"Reducing sampled dimensions from {sum(v[0].size for v in jax.tree.leaves(init_val))} to {init_val['g1'][0].size + init_val['g2'][0].size + init_val['flux'][0].size}")
+        model = condition(model, {"z": z_map})
+        init_val = {k: v for k, v in init_val.items() if k != "z"}
+        print("Latent codes fixed at MAP values for MCMC", file=log_file)
+
+    # Rebuild log_prob_fn if model was modified (float16 or fix_latent)
+    if args.model_profile == "VAE" and (args.vae_precision == "float16" or args.fix_latent):
         seeded_model = seed(model, jax.random.PRNGKey(0))
 
         @jax.jit
@@ -592,8 +606,6 @@ def main():
             return numpyro.infer.util.log_density(
                 seeded_model, (), {"obs": data}, params,
             )[0]
-
-        print("VAE decoder converted to float16 for MCMC")
 
     # Use the the MEADS algorithm for parallel chains on GPUs
     """
