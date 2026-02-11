@@ -379,19 +379,8 @@ def main():
         # load autoencoder
         VAE_PATH = Path(args.vae_path)
         ae = load_galaxy_autoencoder(VAE_PATH, epoch=args.vae_epoch)
-        # Convert VAE weights to float16 for ~2x GPU speedup (V100 tensor cores)
-        if args.vae_precision == "float16":
-            ae = jax.tree.map(
-                lambda x: x.astype(jnp.float16) if isinstance(x, jnp.ndarray) and jnp.issubdtype(x.dtype, jnp.floating) else x,
-                ae,
-            )
-            print("VAE decoder converted to float16")
-        # JIT the decode method to accelerate VAE inference
-        # Cast input z to match decoder weight precision (float16 weights require float16 input)
-        if args.vae_precision == "float16":
-            jitted_decode = eqx.filter_jit(lambda z, key: ae.decode(z.astype(jnp.float16), key=key))
-        else:
-            jitted_decode = eqx.filter_jit(lambda z, key: ae.decode(z, key=key))
+        # Start in float32 for MAP stability; convert to float16 for MCMC later
+        jitted_decode = eqx.filter_jit(lambda z, key: ae.decode(z, key=key))
         # 
         gsparams = galsim.GSParams(
             minimum_fft_size=128,
@@ -565,6 +554,46 @@ def main():
         plt.legend()
         # plt.show()
         plt.savefig(os.path.join(out_dir, "radio_initial_guess.png"))
+
+    # Convert VAE to float16 for MCMC (after MAP is done in float32)
+    if args.model_profile == "VAE" and args.vae_precision == "float16":
+        ae = jax.tree.map(
+            lambda x: x.astype(jnp.float16) if isinstance(x, jnp.ndarray) and jnp.issubdtype(x.dtype, jnp.floating) else x,
+            ae,
+        )
+        jitted_decode = eqx.filter_jit(lambda z, key: ae.decode(z.astype(jnp.float16), key=key))
+        # Rebuild model with float16 decoder
+        model = partial(
+            model_fn_VAE,
+            Ngal=args.Ngal,
+            Npx=args.Npx,
+            pixel_scale_radio=args.pixel_scale,
+            pixel_scale_vae=args.pixel_scale_vae,
+            uv_pos=uv_pos,
+            noise_uv=args.noise_uv,
+            obs=data,
+            g_sigma=args.g_prior_sigma,
+            g_scale=args.g_prior_scale,
+            flux_sigma=args.flux_prior_sigma,
+            flux_max=args.flux_prior_max,
+            flux_min=args.flux_prior_min,
+            latent_dim=args.latent_dim,
+            latent_mean=args.latent_mean,
+            jitted_decode=jitted_decode,
+            gsparams=gsparams,
+            run_type=args.vae_model_inference_mode,
+            batch_size=args.vae_inference_batch_size,
+            use_dropout=args.use_dropout,
+        )
+        seeded_model = seed(model, jax.random.PRNGKey(0))
+
+        @jax.jit
+        def log_prob_fn(params):
+            return numpyro.infer.util.log_density(
+                seeded_model, (), {"obs": data}, params,
+            )[0]
+
+        print("VAE decoder converted to float16 for MCMC")
 
     # Use the the MEADS algorithm for parallel chains on GPUs
     """
