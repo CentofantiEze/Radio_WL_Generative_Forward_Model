@@ -205,6 +205,7 @@ def main():
     parser.add_argument("--vae_model_inference_mode", type=str, default="parallel", help="VAE model inference mode: parallel, sequential or batch.")
     parser.add_argument("--vae_inference_batch_size", type=int, default=1, help="VAE inference batch size if using batch mode.")
     parser.add_argument("--use_dropout", action="store_true", help="Enable VAE dropout during inference (disabled by default for deterministic decoding).")
+    parser.add_argument("--vae_precision", type=str, default="float16", choices=["float32", "float16"], help="VAE decoder weight precision. float16 gives ~2x speedup on V100 GPU.")
     parser.add_argument("--pixel_scale_vae", type=float, default=0.03, help="Pixel scale for VAE images, default: HST pixel scale (0.03 arcsec/pixel).")
     parser.add_argument("--lr_map", type=float, default=1e-2, help="MAP learning rate")
     parser.add_argument(
@@ -378,6 +379,13 @@ def main():
         # load autoencoder
         VAE_PATH = Path(args.vae_path)
         ae = load_galaxy_autoencoder(VAE_PATH, epoch=args.vae_epoch)
+        # Convert VAE weights to float16 for ~2x GPU speedup (V100 tensor cores)
+        if args.vae_precision == "float16":
+            ae = jax.tree.map(
+                lambda x: x.astype(jnp.float16) if isinstance(x, jnp.ndarray) and jnp.issubdtype(x.dtype, jnp.floating) else x,
+                ae,
+            )
+            print("VAE decoder converted to float16")
         # JIT the decode method to accelerate VAE inference
         jitted_decode = eqx.filter_jit(lambda z, key: ae.decode(z, key=key))
         # 
