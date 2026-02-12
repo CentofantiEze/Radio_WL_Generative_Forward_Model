@@ -13,7 +13,7 @@ import optax
 import equinox as eqx
 import blackjax.adaptation.mclmc_adaptation as mclmc_adj
 from einops import rearrange
-from numpyro.handlers import condition, seed, trace
+from numpyro.handlers import seed, trace
 
 warnings.filterwarnings("ignore")
 
@@ -33,11 +33,61 @@ import corner
 
 from src.shearest.data_gen_utils import gen_gal_dataset
 from src.shearest.func_utils import stack_2_complex, to_unit_disk
-from src.shearest.model_utils import model_fn, model_fn_VAE
+from src.shearest.model_utils import model_fn, model_fn_VAE, model_fn_VAE_flow
 from src.shearest.psf_utils import compute_radio_uv_mask
 from src.shearest.posterior_utils import fit_gmm, save_gmm, plot_gmm_contours
 
 from pshear.utils import load_galaxy_autoencoder # type: ignore
+from pshear.nn.flow import make_latent_flow # type: ignore
+import yaml
+
+
+def load_flow_legacy(model_path, epoch):
+    """Load flow saved with old flowjax/equinox (sequential numpy format)."""
+    with open(model_path / 'config.yaml', 'r') as f:
+        config = yaml.load(f, Loader=yaml.FullLoader)
+
+    # Create model skeleton
+    flow = make_latent_flow(key=jax.random.key(0), **config)
+
+    # Read checkpoint arrays
+    checkpoint_path = model_path / f'model_checkpoint_{epoch}.eqx'
+    arrays = []
+    with open(checkpoint_path, 'rb') as f:
+        while True:
+            try:
+                arrays.append(np.load(f, allow_pickle=False))
+            except Exception:
+                break
+
+    # Map arrays to leaves, skipping functions and _dummy
+    leaves, treedef = jax.tree_util.tree_flatten(flow)
+    flat = jax.tree_util.tree_leaves_with_path(flow)
+
+    serializable_indices = []
+    for i, (p, leaf) in enumerate(flat):
+        if callable(leaf) and not isinstance(leaf, (jnp.ndarray, np.ndarray)):
+            continue
+        if '_dummy' in str(p):
+            continue
+        serializable_indices.append(i)
+
+    assert len(serializable_indices) == len(arrays), \
+        f'Leaf count mismatch: {len(serializable_indices)} vs {len(arrays)} arrays'
+
+    new_leaves = list(leaves)
+    for arr_idx, leaf_idx in enumerate(serializable_indices):
+        old_leaf = leaves[leaf_idx]
+        new_val = arrays[arr_idx]
+        if isinstance(old_leaf, int):
+            new_leaves[leaf_idx] = int(new_val.item())
+        elif isinstance(old_leaf, (jnp.ndarray, np.ndarray)):
+            new_leaves[leaf_idx] = jnp.array(new_val)
+        else:
+            new_leaves[leaf_idx] = new_val
+
+    return treedef.unflatten(new_leaves)
+
 
 # ### Simulation parameters
 # Ngal = 100
@@ -206,7 +256,10 @@ def main():
     parser.add_argument("--vae_inference_batch_size", type=int, default=1, help="VAE inference batch size if using batch mode.")
     parser.add_argument("--use_dropout", action="store_true", help="Enable VAE dropout during inference (disabled by default for deterministic decoding).")
     parser.add_argument("--vae_precision", type=str, default="float16", choices=["float32", "float16"], help="VAE decoder weight precision. float16 gives ~2x speedup on V100 GPU.")
-    parser.add_argument("--fix_latent", action="store_true", help="Fix VAE latent codes at MAP values and only sample g1, g2, flux.")
+    parser.add_argument("--use_flow", action="store_true", help="Enable normalizing flow reparameterization of VAE latent space.")
+    parser.add_argument("--flow_path", type=str, default=None, help="Path to the trained flow model directory.")
+    parser.add_argument("--flow_epoch", type=int, default=None, help="Epoch of the trained flow model checkpoint.")
+    parser.add_argument("--flow_condition", type=float, nargs=3, default=[21.69, 15.90, 0.60], help="Fixed conditioning values [mag_auto, flux_radius, zphot] for the flow.")
     parser.add_argument("--pixel_scale_vae", type=float, default=0.03, help="Pixel scale for VAE images, default: HST pixel scale (0.03 arcsec/pixel).")
     parser.add_argument("--lr_map", type=float, default=1e-2, help="MAP learning rate")
     parser.add_argument(
@@ -382,35 +435,74 @@ def main():
         ae = load_galaxy_autoencoder(VAE_PATH, epoch=args.vae_epoch)
         # Start in float32 for MAP stability; convert to float16 for MCMC later
         jitted_decode = eqx.filter_jit(lambda z, key: ae.decode(z, key=key))
-        # 
+        #
         gsparams = galsim.GSParams(
             minimum_fft_size=128,
             folding_threshold=5e-3,
             maxk_threshold=1e-3,
 )
+        # Load normalizing flow if requested
+        flow_forward = None
+        flow_condition = None
+        if args.use_flow:
+            assert args.flow_path is not None, "--flow_path required when --use_flow is set"
+            assert args.flow_epoch is not None, "--flow_epoch required when --use_flow is set"
+            flow = load_flow_legacy(Path(args.flow_path), epoch=args.flow_epoch)
+            flow_forward = eqx.filter_jit(lambda u, c: flow.flow.bijection.transform(u, c))
+            flow_condition = jnp.array(args.flow_condition)
+            print(f"Loaded flow from {args.flow_path} epoch {args.flow_epoch}")
+            print(f"Flow condition: {flow_condition}")
+            print(f"Loaded flow from {args.flow_path} epoch {args.flow_epoch}", file=log_file)
+            print(f"Flow condition: {flow_condition}", file=log_file)
+
         # Initialize the forward model
-        model = partial(
-        model_fn_VAE,
-        Ngal=args.Ngal,
-        Npx=args.Npx,
-        pixel_scale_radio=args.pixel_scale,
-        pixel_scale_vae=args.pixel_scale_vae,
-        uv_pos=uv_pos,
-        noise_uv=args.noise_uv,
-        obs=data,
-        g_sigma=args.g_prior_sigma,
-        g_scale=args.g_prior_scale,
-        flux_sigma=args.flux_prior_sigma,
-        flux_max=args.flux_prior_max,
-        flux_min=args.flux_prior_min,
-        latent_dim=args.latent_dim,
-        latent_mean=args.latent_mean,
-        jitted_decode=jitted_decode,
-        gsparams=gsparams,
-        run_type=args.vae_model_inference_mode,
-        batch_size=args.vae_inference_batch_size,
-        use_dropout=args.use_dropout,
-    )
+        if args.use_flow:
+            model = partial(
+                model_fn_VAE_flow,
+                Ngal=args.Ngal,
+                Npx=args.Npx,
+                pixel_scale_radio=args.pixel_scale,
+                pixel_scale_vae=args.pixel_scale_vae,
+                uv_pos=uv_pos,
+                noise_uv=args.noise_uv,
+                obs=data,
+                g_sigma=args.g_prior_sigma,
+                g_scale=args.g_prior_scale,
+                flux_sigma=args.flux_prior_sigma,
+                flux_max=args.flux_prior_max,
+                flux_min=args.flux_prior_min,
+                latent_dim=args.latent_dim,
+                jitted_decode=jitted_decode,
+                gsparams=gsparams,
+                run_type=args.vae_model_inference_mode,
+                batch_size=args.vae_inference_batch_size,
+                use_dropout=args.use_dropout,
+                flow_forward=flow_forward,
+                flow_condition=flow_condition,
+            )
+        else:
+            model = partial(
+                model_fn_VAE,
+                Ngal=args.Ngal,
+                Npx=args.Npx,
+                pixel_scale_radio=args.pixel_scale,
+                pixel_scale_vae=args.pixel_scale_vae,
+                uv_pos=uv_pos,
+                noise_uv=args.noise_uv,
+                obs=data,
+                g_sigma=args.g_prior_sigma,
+                g_scale=args.g_prior_scale,
+                flux_sigma=args.flux_prior_sigma,
+                flux_max=args.flux_prior_max,
+                flux_min=args.flux_prior_min,
+                latent_dim=args.latent_dim,
+                latent_mean=args.latent_mean,
+                jitted_decode=jitted_decode,
+                gsparams=gsparams,
+                run_type=args.vae_model_inference_mode,
+                batch_size=args.vae_inference_batch_size,
+                use_dropout=args.use_dropout,
+            )
     else:
         model = partial(
             model_fn,
@@ -499,24 +591,8 @@ def main():
     print(f"MAP learning rate: {args.lr_map}", file=log_file)
     print(f"MAP number of steps: {args.n_steps_map}", file=log_file)
 
-    # For VAE with fix_latent: condition g1=g2=0 during MAP so z doesn't absorb shear
-    if args.model_profile == "VAE" and args.fix_latent:
-        map_model = condition(model, {"g1": jnp.zeros(1), "g2": jnp.zeros(1)})
-        seeded_map_model = seed(map_model, jax.random.PRNGKey(0))
-
-        @jax.jit
-        def map_log_prob_fn(params):
-            return numpyro.infer.util.log_density(
-                seeded_map_model, (), {"obs": data}, params,
-            )[0]
-
-        # Remove g1, g2 from init values for MAP
-        map_init_val = {k: v for k, v in init_val_.items() if k not in ("g1", "g2")}
-        nll = lambda params: -map_log_prob_fn(params)
-        print("MAP: conditioning g1=g2=0, optimizing only z and flux")
-    else:
-        map_init_val = init_val_
-        nll = lambda params: -log_prob_fn(params)
+    map_init_val = init_val_
+    nll = lambda params: -log_prob_fn(params)
 
     # find the MAP for chain initialization
     def find_map(init_params):
@@ -541,11 +617,7 @@ def main():
 
     map_result = jax.vmap(find_map)(map_init_val)
 
-    # Restore g1, g2 from prior samples for MCMC initialization
-    if args.model_profile == "VAE" and args.fix_latent:
-        init_val = {**map_result, "g1": init_val_["g1"], "g2": init_val_["g2"]}
-    else:
-        init_val = map_result
+    init_val = map_result
 
     print(
         init_val["g1"] * (args.g_scale / args.g_sigma),
@@ -578,24 +650,6 @@ def main():
         plt.legend()
         # plt.show()
         plt.savefig(os.path.join(out_dir, "radio_initial_guess.png"))
-
-    # Optionally fix latent codes at MAP values (sample only g1, g2, flux)
-    if args.model_profile == "VAE" and args.fix_latent:
-        z_map = init_val["z"][0]
-        print(f"Fixing latent codes at MAP values (z shape: {z_map.shape})")
-        print(f"Reducing sampled dimensions from {sum(v[0].size for v in jax.tree.leaves(init_val))} to {init_val['g1'][0].size + init_val['g2'][0].size + init_val['flux'][0].size}")
-        model = condition(model, {"z": z_map})
-        init_val = {k: v for k, v in init_val.items() if k != "z"}
-        print("Latent codes fixed at MAP values for MCMC", file=log_file)
-
-        # Rebuild log_prob_fn with conditioned model
-        seeded_model = seed(model, jax.random.PRNGKey(0))
-
-        @jax.jit
-        def log_prob_fn(params):
-            return numpyro.infer.util.log_density(
-                seeded_model, (), {"obs": data}, params,
-            )[0]
 
     # Use the the MEADS algorithm for parallel chains on GPUs
     """
@@ -702,20 +756,33 @@ def main():
                 ae,
             )
             jitted_decode = eqx.filter_jit(lambda z, key: ae.decode(z.astype(jnp.float16), key=key))
-            model = partial(
-                model_fn_VAE,
-                Ngal=args.Ngal, Npx=args.Npx,
-                pixel_scale_radio=args.pixel_scale, pixel_scale_vae=args.pixel_scale_vae,
-                uv_pos=uv_pos, noise_uv=args.noise_uv, obs=data,
-                g_sigma=args.g_prior_sigma, g_scale=args.g_prior_scale,
-                flux_sigma=args.flux_prior_sigma, flux_max=args.flux_prior_max, flux_min=args.flux_prior_min,
-                latent_dim=args.latent_dim, latent_mean=args.latent_mean,
-                jitted_decode=jitted_decode, gsparams=gsparams,
-                run_type=args.vae_model_inference_mode, batch_size=args.vae_inference_batch_size,
-                use_dropout=args.use_dropout,
-            )
-            if args.fix_latent:
-                model = condition(model, {"z": z_map})
+            if args.use_flow:
+                model = partial(
+                    model_fn_VAE_flow,
+                    Ngal=args.Ngal, Npx=args.Npx,
+                    pixel_scale_radio=args.pixel_scale, pixel_scale_vae=args.pixel_scale_vae,
+                    uv_pos=uv_pos, noise_uv=args.noise_uv, obs=data,
+                    g_sigma=args.g_prior_sigma, g_scale=args.g_prior_scale,
+                    flux_sigma=args.flux_prior_sigma, flux_max=args.flux_prior_max, flux_min=args.flux_prior_min,
+                    latent_dim=args.latent_dim,
+                    jitted_decode=jitted_decode, gsparams=gsparams,
+                    run_type=args.vae_model_inference_mode, batch_size=args.vae_inference_batch_size,
+                    use_dropout=args.use_dropout,
+                    flow_forward=flow_forward, flow_condition=flow_condition,
+                )
+            else:
+                model = partial(
+                    model_fn_VAE,
+                    Ngal=args.Ngal, Npx=args.Npx,
+                    pixel_scale_radio=args.pixel_scale, pixel_scale_vae=args.pixel_scale_vae,
+                    uv_pos=uv_pos, noise_uv=args.noise_uv, obs=data,
+                    g_sigma=args.g_prior_sigma, g_scale=args.g_prior_scale,
+                    flux_sigma=args.flux_prior_sigma, flux_max=args.flux_prior_max, flux_min=args.flux_prior_min,
+                    latent_dim=args.latent_dim, latent_mean=args.latent_mean,
+                    jitted_decode=jitted_decode, gsparams=gsparams,
+                    run_type=args.vae_model_inference_mode, batch_size=args.vae_inference_batch_size,
+                    use_dropout=args.use_dropout,
+                )
             seeded_model = seed(model, jax.random.PRNGKey(0))
 
             @jax.jit
