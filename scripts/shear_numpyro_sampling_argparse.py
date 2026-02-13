@@ -43,7 +43,12 @@ import yaml
 
 
 def load_flow_legacy(model_path, epoch):
-    """Load flow saved with old flowjax/equinox (sequential numpy format)."""
+    """Load flow saved with old flowjax/equinox (sequential numpy format).
+
+    Handles version mismatches between flowjax 13 (checkpoint) and newer
+    versions by skipping extra wrapper leaves (shape/cond_shape) that were
+    added in later flowjax versions.
+    """
     with open(model_path / 'config.yaml', 'r') as f:
         config = yaml.load(f, Loader=yaml.FullLoader)
 
@@ -71,6 +76,20 @@ def load_flow_legacy(model_path, epoch):
         if '_dummy' in str(p):
             continue
         serializable_indices.append(i)
+
+    # If there are more skeleton leaves than checkpoint arrays, skip extra
+    # shape/cond_shape integer leaves added by newer flowjax versions.
+    if len(serializable_indices) > len(arrays):
+        filtered = []
+        for idx in serializable_indices:
+            path_str = str(flat[idx][0])
+            leaf = flat[idx][1]
+            # Skip shape/cond_shape wrapper leaves not present in old checkpoints
+            is_shape_leaf = ('shape' in path_str or 'cond_shape' in path_str)
+            is_wrapper_int = isinstance(leaf, int) and is_shape_leaf
+            if not is_wrapper_int:
+                filtered.append(idx)
+        serializable_indices = filtered
 
     assert len(serializable_indices) == len(arrays), \
         f'Leaf count mismatch: {len(serializable_indices)} vs {len(arrays)} arrays'
