@@ -256,7 +256,6 @@ def model_fn_VAE_flow(
     cond_rep = jnp.tile(flow_condition, (Ngal, 1))  # (Ngal, 3)
     z_flat = jax.vmap(flow_forward)(u_flat, cond_rep)  # (Ngal, latent_dim^2)
     z = z_flat.reshape(Ngal, latent_dim, latent_dim)
-    numpyro.deterministic("z", z)
 
     # assuming constant shear across galaxies
     g1 = (
