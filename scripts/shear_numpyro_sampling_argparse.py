@@ -281,6 +281,7 @@ def main():
     parser.add_argument("--flow_condition", type=float, nargs=3, default=[21.69, 15.90, 0.60], help="Fixed conditioning values [mag_auto, flux_radius, zphot] for the flow.")
     parser.add_argument("--pixel_scale_vae", type=float, default=0.03, help="Pixel scale for VAE images, default: HST pixel scale (0.03 arcsec/pixel).")
     parser.add_argument("--lr_map", type=float, default=1e-2, help="MAP learning rate")
+    parser.add_argument("--lr_map_shear_factor", type=float, default=10.0, help="Multiplier for g1,g2 learning rate relative to lr_map")
     parser.add_argument(
         "--n_steps_map", type=int, default=5000, help="Number of steps for MAP"
     )
@@ -607,7 +608,7 @@ def main():
             params,
         )[0]
 
-    print(f"MAP learning rate: {args.lr_map}", file=log_file)
+    print(f"MAP learning rate: {args.lr_map} (shear factor: {args.lr_map_shear_factor}x)", file=log_file)
     print(f"MAP number of steps: {args.n_steps_map}", file=log_file)
 
     map_init_val = init_val_
@@ -615,37 +616,84 @@ def main():
 
     # find the MAP for chain initialization
     def find_map(init_params):
-        start_learning_rate = args.lr_map
-        optimizer = optax.adafactor(start_learning_rate)
+        param_labels = {k: 'shear' if k in ('g1', 'g2') else 'default' for k in init_params}
+        optimizer = optax.multi_transform(
+            transforms={
+                'shear': optax.adafactor(args.lr_map * args.lr_map_shear_factor),
+                'default': optax.adafactor(args.lr_map),
+            },
+            param_labels=param_labels,
+        )
 
         opt_state = optimizer.init(init_params)
 
         # A simple update loop.
         def update_step(carry, xs):
             params, opt_state = carry
-            grads = jax.grad(nll)(params)
+            loss, grads = jax.value_and_grad(nll)(params)
             updates, opt_state = optimizer.update(grads, opt_state, params)
             params = optax.apply_updates(params, updates)
-            return (params, opt_state), 0.0
+            return (params, opt_state), (loss, params["g1"], params["g2"])
 
-        (params, _), _ = jax.lax.scan(
+        (params, _), (losses, g1_trace, g2_trace) = jax.lax.scan(
             update_step, (init_params, opt_state), length=args.n_steps_map
         )
 
-        return params
+        return params, losses, g1_trace, g2_trace
 
-    map_result = jax.vmap(find_map)(map_init_val)
+    map_results = jax.vmap(find_map)(map_init_val)
+    init_val, map_losses, map_g1_trace, map_g2_trace = map_results
 
-    init_val = map_result
+    # Rescale g1,g2 traces to physical units
+    g_rescale = args.g_scale / args.g_sigma
+    map_g1_trace_phys = map_g1_trace * g_rescale
+    map_g2_trace_phys = map_g2_trace * g_rescale
 
+    # Print MAP diagnostics
     print(
-        init_val["g1"] * (args.g_scale / args.g_sigma),
-        init_val["g2"] * (args.g_scale / args.g_sigma),
+        init_val["g1"] * g_rescale,
+        init_val["g2"] * g_rescale,
     )
     print(
-        f"Initial guess: g1={init_val['g1']*(args.g_scale/args.g_sigma)}, g2={init_val['g2']*(args.g_scale/args.g_sigma)}",
+        f"Initial guess: g1={init_val['g1']*g_rescale}, g2={init_val['g2']*g_rescale}",
         file=log_file,
     )
+    print(f"MAP final loss (per chain): {map_losses[:, -1]}", file=log_file)
+
+    if args.save_plots:
+        # Plot MAP convergence: loss and g1,g2 evolution
+        fig, axes = plt.subplots(1, 3, figsize=(15, 4))
+        steps = jnp.arange(args.n_steps_map)
+
+        # Loss
+        for c in range(map_losses.shape[0]):
+            axes[0].plot(steps, map_losses[c], alpha=0.7, label=f"chain {c}")
+        axes[0].set_xlabel("MAP step")
+        axes[0].set_ylabel("Loss (NLL)")
+        axes[0].set_title("MAP loss")
+        axes[0].legend(fontsize=7)
+
+        # g1
+        for c in range(map_g1_trace_phys.shape[0]):
+            axes[1].plot(steps, map_g1_trace_phys[c], alpha=0.7, label=f"chain {c}")
+        axes[1].axhline(args.g1_true, color="k", ls="--", label="true")
+        axes[1].set_xlabel("MAP step")
+        axes[1].set_ylabel("g1")
+        axes[1].set_title("g1 evolution")
+        axes[1].legend(fontsize=7)
+
+        # g2
+        for c in range(map_g2_trace_phys.shape[0]):
+            axes[2].plot(steps, map_g2_trace_phys[c], alpha=0.7, label=f"chain {c}")
+        axes[2].axhline(args.g2_true, color="k", ls="--", label="true")
+        axes[2].set_xlabel("MAP step")
+        axes[2].set_ylabel("g2")
+        axes[2].set_title("g2 evolution")
+        axes[2].legend(fontsize=7)
+
+        fig.tight_layout()
+        fig.savefig(os.path.join(out_dir, "map_convergence.png"), dpi=150)
+        plt.close(fig)
     if args.save_data:
         np.save(os.path.join(out_dir, "radio_map_val.npy"), init_val, allow_pickle=True)
 
