@@ -281,13 +281,11 @@ def main():
     parser.add_argument("--flow_condition", type=float, nargs=3, default=[21.69, 15.90, 0.60], help="Fixed conditioning values [mag_auto, flux_radius, zphot] for the flow.")
     parser.add_argument("--pixel_scale_vae", type=float, default=0.03, help="Pixel scale for VAE images, default: HST pixel scale (0.03 arcsec/pixel).")
     parser.add_argument("--lr_map", type=float, default=1e-2, help="MAP learning rate")
-    parser.add_argument("--lr_map_shear_factor", type=float, default=10.0, help="Multiplier for g1,g2 learning rate relative to lr_map")
+    parser.add_argument("--lr_map_shear_factor", type=float, default=1.0, help="Multiplier for g1,g2 learning rate relative to lr_map")
     parser.add_argument("--map_optimizer", type=str, default="adam", choices=["adam", "adafactor"], help="Optimizer for MAP estimation")
     parser.add_argument(
         "--n_steps_map", type=int, default=5000, help="Number of steps for MAP"
     )
-    parser.add_argument("--n_steps_map_shear", type=int, default=0, help="Extra refinement steps optimizing only g1,g2 (0=disabled)")
-    parser.add_argument("--lr_map_shear_refine", type=float, default=1e-3, help="Learning rate for g1,g2 refinement phase")
     parser.add_argument("--point_estimate", action="store_true", default=False, help="Stop after MAP: save g1,g2 estimates and exit (no MCMC)")
     parser.add_argument("--sampler", type=str, default="ghmc", help="Sampler to use: ghmc or mclmc")
     parser.add_argument(
@@ -645,33 +643,6 @@ def main():
             update_step, (init_params, opt_state), length=args.n_steps_map
         )
 
-        # Phase 2: refine only g1,g2 with galaxy params frozen
-        if args.n_steps_map_shear > 0:
-            optimizer_refine = optax.multi_transform(
-                transforms={
-                    'shear': optax.adam(args.lr_map_shear_refine),
-                    'default': optax.set_to_zero(),
-                },
-                param_labels=param_labels,
-            )
-
-            opt_state_refine = optimizer_refine.init(params)
-
-            def update_step_refine(carry, xs):
-                params, opt_state = carry
-                loss, grads = jax.value_and_grad(nll)(params)
-                updates, opt_state = optimizer_refine.update(grads, opt_state, params)
-                params = optax.apply_updates(params, updates)
-                return (params, opt_state), (loss, params["g1"], params["g2"])
-
-            (params, _), (losses_r, g1_trace_r, g2_trace_r) = jax.lax.scan(
-                update_step_refine, (params, opt_state_refine), length=args.n_steps_map_shear
-            )
-
-            losses = jnp.concatenate([losses, losses_r])
-            g1_trace = jnp.concatenate([g1_trace, g1_trace_r])
-            g2_trace = jnp.concatenate([g2_trace, g2_trace_r])
-
         return params, losses, g1_trace, g2_trace
 
     map_results = jax.vmap(find_map)(map_init_val)
@@ -681,7 +652,6 @@ def main():
     g_rescale = args.g_scale / args.g_sigma
     map_g1_trace_phys = map_g1_trace * g_rescale
     map_g2_trace_phys = map_g2_trace * g_rescale
-    total_map_steps = args.n_steps_map + args.n_steps_map_shear
 
     # Print MAP diagnostics
     print(
@@ -696,51 +666,38 @@ def main():
 
     if args.save_plots:
         # Plot MAP convergence: loss and g1,g2 evolution
-        fig, axes = plt.subplots(2, 2, figsize=(12, 8))
-        steps = jnp.arange(total_map_steps)
-        zoom_start = args.n_steps_map  # skip general optimisation for zoomed view over g refinement phase
+        fig, axes = plt.subplots(1, 3, figsize=(15, 4))
+        steps = jnp.arange(args.n_steps_map)
 
-        # Loss — full (log scale)
+        # Loss (log scale, shift to ensure positive values)
+        loss_min = jnp.min(map_losses)
+        loss_offset = jnp.where(loss_min < 0, jnp.abs(loss_min) + 1.0, 0.0)
         for c in range(map_losses.shape[0]):
-            axes[0, 0].plot(steps, map_losses[c], alpha=0.7, label=f"chain {c}")
-        if args.n_steps_map_shear > 0:
-            axes[0, 0].axvline(args.n_steps_map, color="k", ls=":", alpha=0.5, label="refine")
-        axes[0, 0].set_xlabel("MAP step")
-        axes[0, 0].set_ylabel("Loss (NLL)")
-        axes[0, 0].set_title("MAP loss (full)")
-        axes[0, 0].legend(fontsize=7)
-
-        # Loss — zoomed (skip first 10%, linear scale)
-        for c in range(map_losses.shape[0]):
-            axes[0, 1].plot(steps[zoom_start:], map_losses[c, zoom_start:], alpha=0.7, label=f"chain {c}")
-        if args.n_steps_map_shear > 0:
-            axes[0, 1].axvline(args.n_steps_map, color="k", ls=":", alpha=0.5, label="refine")
-        axes[0, 1].set_xlabel("MAP step")
-        axes[0, 1].set_ylabel("Loss (NLL)")
-        axes[0, 1].set_title(f"MAP loss (from step {zoom_start})")
-        axes[0, 1].legend(fontsize=7)
+            axes[0].plot(steps, map_losses[c] + loss_offset, alpha=0.7, label=f"chain {c}")
+        axes[0].set_yscale("log")
+        axes[0].set_xlabel("MAP step")
+        ylabel = "Loss (NLL)" if loss_offset == 0 else f"Loss (NLL + {loss_offset:.1f})"
+        axes[0].set_ylabel(ylabel)
+        axes[0].set_title("MAP loss")
+        axes[0].legend(fontsize=7)
 
         # g1
         for c in range(map_g1_trace_phys.shape[0]):
-            axes[1, 0].plot(steps, map_g1_trace_phys[c], alpha=0.7, label=f"chain {c}")
-        axes[1, 0].axhline(args.g1_true, color="k", ls="--", label="true")
-        if args.n_steps_map_shear > 0:
-            axes[1, 0].axvline(args.n_steps_map, color="k", ls=":", alpha=0.5, label="refine")
-        axes[1, 0].set_xlabel("MAP step")
-        axes[1, 0].set_ylabel("g1")
-        axes[1, 0].set_title("g1 evolution")
-        axes[1, 0].legend(fontsize=7)
+            axes[1].plot(steps, map_g1_trace_phys[c], alpha=0.7, label=f"chain {c}")
+        axes[1].axhline(args.g1_true, color="k", ls="--", label="true")
+        axes[1].set_xlabel("MAP step")
+        axes[1].set_ylabel("g1")
+        axes[1].set_title("g1 evolution")
+        axes[1].legend(fontsize=7)
 
         # g2
         for c in range(map_g2_trace_phys.shape[0]):
-            axes[1, 1].plot(steps, map_g2_trace_phys[c], alpha=0.7, label=f"chain {c}")
-        axes[1, 1].axhline(args.g2_true, color="k", ls="--", label="true")
-        if args.n_steps_map_shear > 0:
-            axes[1, 1].axvline(args.n_steps_map, color="k", ls=":", alpha=0.5, label="refine")
-        axes[1, 1].set_xlabel("MAP step")
-        axes[1, 1].set_ylabel("g2")
-        axes[1, 1].set_title("g2 evolution")
-        axes[1, 1].legend(fontsize=7)
+            axes[2].plot(steps, map_g2_trace_phys[c], alpha=0.7, label=f"chain {c}")
+        axes[2].axhline(args.g2_true, color="k", ls="--", label="true")
+        axes[2].set_xlabel("MAP step")
+        axes[2].set_ylabel("g2")
+        axes[2].set_title("g2 evolution")
+        axes[2].legend(fontsize=7)
 
         fig.tight_layout()
         fig.savefig(os.path.join(out_dir, "map_convergence.png"), dpi=150)
