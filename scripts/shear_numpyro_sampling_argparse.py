@@ -698,7 +698,7 @@ def main():
         # Plot MAP convergence: loss and g1,g2 evolution
         fig, axes = plt.subplots(2, 2, figsize=(12, 8))
         steps = jnp.arange(total_map_steps)
-        zoom_start = total_map_steps // 10  # skip first 10% for zoomed view
+        zoom_start = args.n_steps_map  # skip general optimisation for zoomed view over g refinement phase
 
         # Loss — full (log scale)
         for c in range(map_losses.shape[0]):
