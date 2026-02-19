@@ -286,6 +286,7 @@ def main():
     parser.add_argument(
         "--n_steps_map", type=int, default=5000, help="Number of steps for MAP"
     )
+    parser.add_argument("--n_steps_map_freeze_shear", type=int, default=0, help="Initial MAP steps with g1,g2 frozen (optimize only u/flux, 0=disabled)")
     parser.add_argument("--point_estimate", action="store_true", default=False, help="Stop after MAP: save g1,g2 estimates and exit (no MCMC)")
     parser.add_argument("--sampler", type=str, default="ghmc", help="Sampler to use: ghmc or mclmc")
     parser.add_argument(
@@ -619,9 +620,31 @@ def main():
     # find the MAP for chain initialization
     def find_map(init_params):
         param_labels = {k: 'shear' if k in ('g1', 'g2') else 'default' for k in init_params}
+        opt_fn = optax.adam if args.map_optimizer == "adam" else optax.adafactor
+
+        # Phase 0: optimize only u/flux with g1,g2 frozen
+        if args.n_steps_map_freeze_shear > 0:
+            optimizer_freeze = optax.multi_transform(
+                transforms={
+                    'shear': optax.set_to_zero(),
+                    'default': opt_fn(args.lr_map),
+                },
+                param_labels=param_labels,
+            )
+            opt_state_freeze = optimizer_freeze.init(init_params)
+
+            def update_step_freeze(carry, xs):
+                params, opt_state = carry
+                loss, grads = jax.value_and_grad(nll)(params)
+                updates, opt_state = optimizer_freeze.update(grads, opt_state, params)
+                params = optax.apply_updates(params, updates)
+                return (params, opt_state), (loss, params["g1"], params["g2"])
+
+            (init_params, _), (losses_f, g1_trace_f, g2_trace_f) = jax.lax.scan(
+                update_step_freeze, (init_params, opt_state_freeze), length=args.n_steps_map_freeze_shear
+            )
 
         # Phase 1: joint optimization of all parameters
-        opt_fn = optax.adam if args.map_optimizer == "adam" else optax.adafactor
         optimizer = optax.multi_transform(
             transforms={
                 'shear': opt_fn(args.lr_map * args.lr_map_shear_factor),
@@ -642,6 +665,12 @@ def main():
         (params, _), (losses, g1_trace, g2_trace) = jax.lax.scan(
             update_step, (init_params, opt_state), length=args.n_steps_map
         )
+
+        # Concatenate traces
+        if args.n_steps_map_freeze_shear > 0:
+            losses = jnp.concatenate([losses_f, losses])
+            g1_trace = jnp.concatenate([g1_trace_f, g1_trace])
+            g2_trace = jnp.concatenate([g2_trace_f, g2_trace])
 
         return params, losses, g1_trace, g2_trace
 
@@ -667,7 +696,8 @@ def main():
     if args.save_plots:
         # Plot MAP convergence: loss and g1,g2 evolution
         fig, axes = plt.subplots(1, 3, figsize=(15, 4))
-        steps = jnp.arange(args.n_steps_map)
+        total_map_steps = args.n_steps_map_freeze_shear + args.n_steps_map
+        steps = jnp.arange(total_map_steps)
 
         # Loss (log scale, shift to ensure positive values)
         loss_min = jnp.min(map_losses)
@@ -675,6 +705,8 @@ def main():
         for c in range(map_losses.shape[0]):
             axes[0].plot(steps, map_losses[c] + loss_offset, alpha=0.7, label=f"chain {c}")
         axes[0].set_yscale("log")
+        if args.n_steps_map_freeze_shear > 0:
+            axes[0].axvline(args.n_steps_map_freeze_shear, color="k", ls=":", alpha=0.5, label="unfreeze g")
         axes[0].set_xlabel("MAP step")
         ylabel = "Loss (NLL)" if loss_offset == 0 else f"Loss (NLL + {loss_offset:.1f})"
         axes[0].set_ylabel(ylabel)
@@ -685,6 +717,8 @@ def main():
         for c in range(map_g1_trace_phys.shape[0]):
             axes[1].plot(steps, map_g1_trace_phys[c], alpha=0.7, label=f"chain {c}")
         axes[1].axhline(args.g1_true, color="k", ls="--", label="true")
+        if args.n_steps_map_freeze_shear > 0:
+            axes[1].axvline(args.n_steps_map_freeze_shear, color="k", ls=":", alpha=0.5, label="unfreeze g")
         axes[1].set_xlabel("MAP step")
         axes[1].set_ylabel("g1")
         axes[1].set_title("g1 evolution")
@@ -694,6 +728,8 @@ def main():
         for c in range(map_g2_trace_phys.shape[0]):
             axes[2].plot(steps, map_g2_trace_phys[c], alpha=0.7, label=f"chain {c}")
         axes[2].axhline(args.g2_true, color="k", ls="--", label="true")
+        if args.n_steps_map_freeze_shear > 0:
+            axes[2].axvline(args.n_steps_map_freeze_shear, color="k", ls=":", alpha=0.5, label="unfreeze g")
         axes[2].set_xlabel("MAP step")
         axes[2].set_ylabel("g2")
         axes[2].set_title("g2 evolution")
