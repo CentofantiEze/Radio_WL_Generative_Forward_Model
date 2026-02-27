@@ -299,6 +299,9 @@ def main():
         "--step_size", type=float, default=None, help="Step size for HMC"
     )
     parser.add_argument(
+        "--mclmc_L", type=float, default=None, help="MCLMC trajectory length L. If both --mclmc_L and --step_size are set, skips adaptation entirely."
+    )
+    parser.add_argument(
         "--num", type=int, default=20, help="Number of batch iterations"
     )
     parser.add_argument(
@@ -840,37 +843,46 @@ def main():
             inverse_mass_matrix=inverse_mass_matrix,
         )
 
-        # Run adaptation on the first chain only (the API expects a single state)
+        # Skip adaptation if both L and step_size are provided
         first_chain_state = temp_kernel.init(first_chain_init, key_init_chains[0])
 
-        max_adapt_attempts = 10
-        for adapt_attempt in range(1, max_adapt_attempts + 1):
-            print(f"MCLMC adaptation attempt {adapt_attempt}/{max_adapt_attempts}...")
-            key_tune, key_retry = jax.random.split(key_tune)
-
-            adapted_state, parameters, _ = mclmc_adj.mclmc_find_L_and_step_size(
-                                            mclmc_kernel=mclmc_factory,
-                                            num_steps=args.n_warmup,
-                                            state=first_chain_state,
-                                            rng_key=key_retry,
+        if args.mclmc_L is not None and args.step_size is not None:
+            print(f"Skipping MCLMC adaptation: using L={args.mclmc_L}, step_size={args.step_size}")
+            print(f"Skipping MCLMC adaptation: using L={args.mclmc_L}, step_size={args.step_size}", file=log_file)
+            parameters = mclmc_adj.MCLMCAdaptationState(
+                L=jnp.array(args.mclmc_L),
+                step_size=jnp.array(args.step_size),
+                inverse_mass_matrix=jnp.array(inverse_mass_matrix),
             )
+        else:
+            max_adapt_attempts = 10
+            for adapt_attempt in range(1, max_adapt_attempts + 1):
+                print(f"MCLMC adaptation attempt {adapt_attempt}/{max_adapt_attempts}...")
+                key_tune, key_retry = jax.random.split(key_tune)
 
-            if parameters.step_size > 0 and parameters.L > 0:
-                break
-            print(f"Adaptation failed (step_size={parameters.step_size}, L={parameters.L}), retrying...")
+                adapted_state, parameters, _ = mclmc_adj.mclmc_find_L_and_step_size(
+                                                mclmc_kernel=mclmc_factory,
+                                                num_steps=args.n_warmup,
+                                                state=first_chain_state,
+                                                rng_key=key_retry,
+                )
 
-        if parameters.step_size <= 0 or parameters.L <= 0:
-            msg = (f"MCLMC adaptation failed after {max_adapt_attempts} attempts: "
-                   f"step_size={parameters.step_size}, L={parameters.L}")
-            print(msg)
-            print(msg, file=log_file)
-            log_file.close()
-            raise RuntimeError(msg)
+                if parameters.step_size > 0 and parameters.L > 0:
+                    break
+                print(f"Adaptation failed (step_size={parameters.step_size}, L={parameters.L}), retrying...")
 
-        print("Step size:", parameters.step_size)
-        print(f"Step size: {parameters.step_size}", file=log_file)
-        print("L:", parameters.L)
-        print(f"L: {parameters.L}", file=log_file)
+            if parameters.step_size <= 0 or parameters.L <= 0:
+                msg = (f"MCLMC adaptation failed after {max_adapt_attempts} attempts: "
+                       f"step_size={parameters.step_size}, L={parameters.L}")
+                print(msg)
+                print(msg, file=log_file)
+                log_file.close()
+                raise RuntimeError(msg)
+
+            print("Step size:", parameters.step_size)
+            print(f"Step size: {parameters.step_size}", file=log_file)
+            print("L:", parameters.L)
+            print(f"L: {parameters.L}", file=log_file)
 
         # Convert VAE to float16 for sampling (after adaptation in float32)
         if args.model_profile == "VAE" and args.vae_precision == "float16":
