@@ -1039,13 +1039,20 @@ def main():
         )(last_states, keys[:, i, :])
         sample_list.append(samples)
 
-        # Quick diagnostics: acceptance rate and shear chain statistics (zero extra compute)
-        acc = float(info.acceptance_rate.mean())
+        # Quick diagnostics: sampler health and shear chain statistics (zero extra compute).
+        # MCLMC info has no acceptance_rate; energy_change measures integrator accuracy:
+        #   |energy_change| << 1  →  step_size fine
+        #   |energy_change| >> 1  →  step_size too large, expect poor mixing
+        # GHMC info has acceptance_rate directly (target > 0.6).
+        if args.sampler == "mclmc":
+            sampler_diag = f"mean|energy_change|={float(jnp.abs(info.energy_change).mean()):.3f}"
+        else:
+            sampler_diag = f"accept={float(info.acceptance_rate.mean()):.3f}"
         g1_mean = float(samples.position["g1"].mean()) * g_rescale
         g1_std  = float(samples.position["g1"].std())  * g_rescale
         g2_mean = float(samples.position["g2"].mean()) * g_rescale
         g2_std  = float(samples.position["g2"].std())  * g_rescale
-        diag = (f"  accept={acc:.3f} | "
+        diag = (f"  {sampler_diag} | "
                 f"g1={g1_mean:.4f}±{g1_std:.4f} | "
                 f"g2={g2_mean:.4f}±{g2_std:.4f}")
         print(diag)
