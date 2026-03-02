@@ -1039,6 +1039,18 @@ def main():
         )(last_states, keys[:, i, :])
         sample_list.append(samples)
 
+        # Quick diagnostics: acceptance rate and shear chain statistics (zero extra compute)
+        acc = float(info.acceptance_rate.mean())
+        g1_mean = float(samples.position["g1"].mean()) * g_rescale
+        g1_std  = float(samples.position["g1"].std())  * g_rescale
+        g2_mean = float(samples.position["g2"].mean()) * g_rescale
+        g2_std  = float(samples.position["g2"].std())  * g_rescale
+        diag = (f"  accept={acc:.3f} | "
+                f"g1={g1_mean:.4f}±{g1_std:.4f} | "
+                f"g2={g2_mean:.4f}±{g2_std:.4f}")
+        print(diag)
+        print(diag, file=log_file)
+
     samples_ = {
         key: np.concatenate([sample_list[k].position[key] for k in range(args.num)], 1)
         for key in last_states.position
