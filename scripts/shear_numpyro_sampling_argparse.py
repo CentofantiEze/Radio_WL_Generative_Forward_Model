@@ -302,6 +302,12 @@ def main():
         "--mclmc_L", type=float, default=None, help="MCLMC trajectory length L. If both --mclmc_L and --step_size are set, skips adaptation entirely."
     )
     parser.add_argument(
+        "--mclmc_inv_mass_shear", type=float, default=None,
+        help="Diagonal inverse mass matrix value for g1/g2 in MCLMC (all other params use 1.0). "
+             "Set to the expected posterior variance of g1/g2, e.g. (g_scale/sqrt(Ngal))^2. "
+             "Default None uses a scalar mass matrix (all params equal)."
+    )
+    parser.add_argument(
         "--num", type=int, default=20, help="Number of batch iterations"
     )
     parser.add_argument(
@@ -878,7 +884,20 @@ def main():
                 integrator=blackjax.mcmc.integrators.isokinetic_mclachlan,
             )
 
-        inverse_mass_matrix = 1.0
+        # Build inverse mass matrix. JAX flattens parameter dicts in sorted key order,
+        # so we iterate sorted keys to match the flattened vector layout.
+        # Setting a smaller value for g1/g2 gives them finer effective steps,
+        # compensating for their much narrower posterior relative to latent dims.
+        if args.mclmc_inv_mass_shear is not None:
+            inv_mass_parts = []
+            for k in sorted(first_chain_init.keys()):
+                val = args.mclmc_inv_mass_shear if k in ("g1", "g2") else 1.0
+                inv_mass_parts.append(jnp.full(first_chain_init[k].size, val))
+            inverse_mass_matrix = jnp.concatenate(inv_mass_parts)
+            print(f"MCLMC diagonal inverse mass matrix: g1/g2={args.mclmc_inv_mass_shear}, others=1.0")
+            print(f"MCLMC diagonal inverse mass matrix: g1/g2={args.mclmc_inv_mass_shear}, others=1.0", file=log_file)
+        else:
+            inverse_mass_matrix = 1.0
 
         temp_kernel = blackjax.mclmc(
             log_prob_fn,
@@ -1067,6 +1086,13 @@ def main():
     print(
         "ESS flux", blackjax.diagnostics.effective_sample_size(samples_["flux"][..., 0])
     )
+    if args.model_profile == "VAE":
+        latent_key = "u" if args.use_flow else "z"
+        latent_ess = np.mean([
+            blackjax.diagnostics.effective_sample_size(samples_[latent_key][:, :, gal, 0, 0])
+            for gal in range(args.Ngal)
+        ])
+        print(f"ESS {latent_key} (mean over galaxies, first component)", latent_ess)
     if args.model_profile != "VAE":
         print(
             "ESS hlr", blackjax.diagnostics.effective_sample_size(samples_["hlr"][..., 0])
@@ -1089,6 +1115,11 @@ def main():
         blackjax.diagnostics.effective_sample_size(samples_["flux"][..., 0]),
         file=log_file,
     )
+    if args.model_profile == "VAE":
+        print(
+            f"ESS {latent_key} (mean over galaxies, first component)", latent_ess,
+            file=log_file,
+        )
     if args.model_profile != "VAE":
         print(
             "ESS hlr",
