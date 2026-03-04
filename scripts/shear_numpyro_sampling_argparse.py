@@ -304,7 +304,8 @@ def main():
     parser.add_argument(
         "--mclmc_inv_mass_shear", type=float, default=None,
         help="Diagonal inverse mass matrix value for g1/g2 in MCLMC (all other params use 1.0). "
-             "Set to the expected posterior variance of g1/g2, e.g. (g_scale/sqrt(Ngal))^2. "
+             "Set to the expected posterior variance of g1/g2 in MCMC sampling space, "
+             "e.g. g_scale/sqrt(Ngal). "
              "Default None uses a scalar mass matrix (all params equal)."
     )
     parser.add_argument(
