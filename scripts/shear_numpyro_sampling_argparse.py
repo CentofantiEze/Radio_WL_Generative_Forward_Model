@@ -119,8 +119,8 @@ def load_flow_legacy(model_path, epoch):
 # g2_true = 0.05
 # ell_sigma = .5
 # ell_scale = .3
-# g_sigma = 1.0
-# g_scale = .3
+# g_prior_sigma = 1.0
+# g_prior_scale = .3
 # sersic_index = 1.
 
 # ### radio PSF parameters
@@ -205,13 +205,8 @@ def main():
         "--g2_true", type=float, default=0.05, help="True g2 shear value"
     )
     parser.add_argument(
-        "--ell_sigma", type=float, default=1.0, help="Ellipticity prior sigma"
+        "--ell_scale", type=float, default=0.2, help="Ellipticity scale for data generation"
     )
-    parser.add_argument(
-        "--ell_scale", type=float, default=0.2, help="Ellipticity prior scale"
-    )
-    parser.add_argument("--g_sigma", type=float, default=1.0, help="Shear prior sigma")
-    parser.add_argument("--g_scale", type=float, default=0.1, help="Shear prior scale")
     parser.add_argument("--sersic_index", type=float, default=None, help="Sersic index")
     parser.add_argument("--antenna_type", type=str, default="random", help="Antenna type: random or file")
     parser.add_argument("--antenna_file", type=str, default=None, help="Path to antenna file if antenna_type is file")
@@ -375,8 +370,8 @@ def main():
     print(f"noise_uv: {args.noise_uv}", file=log_file)
     print(f"g1_true: {args.g1_true}", file=log_file)
     print(f"g2_true: {args.g2_true}", file=log_file)
-    print(f"Ellipticity prior scale: {args.ell_scale}", file=log_file)
-    print(f"Shear prior scale: {args.g_scale}", file=log_file)
+    print(f"Ellipticity scale (data gen): {args.ell_scale}", file=log_file)
+    print(f"Shear prior scale: {args.g_prior_scale}", file=log_file)
 
     # Compute the radio PSF
     uv_pos, mask, psf = compute_radio_uv_mask(
@@ -688,7 +683,7 @@ def main():
     init_val, map_losses, map_g1_trace, map_g2_trace = map_results
 
     # Rescale g1,g2 traces to physical units
-    g_rescale = args.g_scale / args.g_sigma
+    g_rescale = args.g_prior_scale / args.g_prior_sigma
     map_g1_trace_phys = map_g1_trace * g_rescale
     map_g2_trace_phys = map_g2_trace * g_rescale
 
@@ -767,13 +762,13 @@ def main():
         # Plot the initial guess for the shear
         plt.figure()
         plt.scatter(
-            init_val_["g1"] * (args.g_scale / args.g_sigma),
-            init_val_["g2"] * (args.g_scale / args.g_sigma),
+            init_val_["g1"] * (args.g_prior_scale / args.g_prior_sigma),
+            init_val_["g2"] * (args.g_prior_scale / args.g_prior_sigma),
             label="Initial guess",
         )
         plt.scatter(
-            init_val["g1"] * (args.g_scale / args.g_sigma),
-            init_val["g2"] * (args.g_scale / args.g_sigma),
+            init_val["g1"] * (args.g_prior_scale / args.g_prior_sigma),
+            init_val["g2"] * (args.g_prior_scale / args.g_prior_sigma),
             label="MAP estimate",
         )
         plt.scatter(args.g1_true, args.g2_true, color="red", label="True shear")
@@ -1206,8 +1201,8 @@ def main():
                     #  e1, e2 -> to_unit_disk
                     e = jnp.stack(
                         [
-                            samples_["e1"][k, :, 0] / args.ell_sigma * args.ell_scale,
-                            samples_["e2"][k, :, 0] / args.ell_sigma * args.ell_scale,
+                            samples_["e1"][k, :, 0] / args.ell_prior_sigma * args.ell_prior_scale,
+                            samples_["e2"][k, :, 0] / args.ell_prior_sigma * args.ell_prior_scale,
                         ],
                         0,
                     )
@@ -1220,8 +1215,8 @@ def main():
                     # g1, g2 -> to_unit_disk
                     g = jnp.stack(
                         [
-                            samples_["g1"][k, :, 0] / args.g_sigma * args.g_scale,
-                            samples_["g2"][k, :, 0] / args.g_sigma * args.g_scale,
+                            samples_["g1"][k, :, 0] / args.g_prior_sigma * args.g_prior_scale,
+                            samples_["g2"][k, :, 0] / args.g_prior_sigma * args.g_prior_scale,
                         ],
                         0,
                     )
@@ -1244,7 +1239,7 @@ def main():
         two_truths = np.array([args.g1_true, args.g2_true])
         samples_g = np.concatenate([samples_["g1"], samples_["g2"]], -1).reshape(
             (-1, 2)
-        ) * (args.g_scale / args.g_sigma)
+        ) * (args.g_prior_scale / args.g_prior_sigma)
 
         two_cols = ["g_1", "g_2"]
         two_labels = [r"$\gamma_1$", r"$\gamma_2$"]
@@ -1308,7 +1303,7 @@ def main():
     # Compute posterior density estimation shear samples
     g1_scaled = samples_["g1"][np.where(flatchain == False),:]
     g2_scaled = samples_["g2"][np.where(flatchain == False),:]
-    samples_g_scaled = np.concatenate([g1_scaled, g2_scaled], -1).reshape((-1,2)) / args.g_sigma * args.g_scale
+    samples_g_scaled = np.concatenate([g1_scaled, g2_scaled], -1).reshape((-1,2)) / args.g_prior_sigma * args.g_prior_scale
     # g_mean = np.mean(samples_g_scaled, axis=0)
     # g_std = np.sqrt(np.diag(np.cov(samples_g_scaled, rowvar=False)))
     # print(f"Shear mean: g1={g_mean[0]}, g2={g_mean[1]}")

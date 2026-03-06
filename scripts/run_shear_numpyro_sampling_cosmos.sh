@@ -39,10 +39,8 @@ args=(
     # --sersic_index 1.0 
     --g1_true -0.05 
     --g2_true 0.05 
-    --ell_sigma 1.0 
     --ell_scale 0.2 
-    --g_sigma 1.0 
-    --g_scale 0.1
+
     --antenna_type random
     # --antenna_file ../data/SKA-Mid.txt
     # --uv_mask_weighting histogram
