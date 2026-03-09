@@ -282,6 +282,7 @@ def main():
         "--n_steps_map", type=int, default=5000, help="Number of steps for MAP"
     )
     parser.add_argument("--n_steps_map_freeze_shear", type=int, default=0, help="Initial MAP steps with g1,g2 frozen (optimize only u/flux, 0=disabled)")
+    parser.add_argument("--g_chains_init", type=float, nargs=2, default=None, metavar=("G1", "G2"), help="Initialize all chains at this (g1, g2) in physical units. Converted to MCMC space via g_prior_sigma/g_prior_scale.")
     parser.add_argument("--point_estimate", action="store_true", default=False, help="Stop after MAP: save g1,g2 estimates and exit (no MCMC)")
     parser.add_argument("--sampler", type=str, default="ghmc", help="Sampler to use: ghmc or mclmc")
     parser.add_argument(
@@ -596,6 +597,17 @@ def main():
 
     keys = jax.random.split(key, args.num_chains)[: args.num_chains]
     init_val_ = jax.vmap(draw_params)(keys)
+
+    if args.g_chains_init is not None:
+        g1_init, g2_init = args.g_chains_init
+        # Convert from physical to MCMC space (inverse of g_rescale = g_prior_scale/g_prior_sigma)
+        g1_mcmc = g1_init * args.g_prior_sigma / args.g_prior_scale
+        g2_mcmc = g2_init * args.g_prior_sigma / args.g_prior_scale
+        init_val_ = {**init_val_,
+                     "g1": jnp.full_like(init_val_["g1"], g1_mcmc),
+                     "g2": jnp.full_like(init_val_["g2"], g2_mcmc)}
+        print(f"g_chains_init: g1={g1_init}, g2={g2_init} (physical) -> g1={g1_mcmc:.4f}, g2={g2_mcmc:.4f} (MCMC space)")
+
     if args.save_data:
         np.save(os.path.join(out_dir, "radio_init_val.npy"), init_val_, allow_pickle=True)
 
