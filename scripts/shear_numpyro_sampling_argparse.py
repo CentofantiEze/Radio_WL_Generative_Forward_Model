@@ -784,6 +784,8 @@ def main():
             label="MAP estimate",
         )
         plt.scatter(args.g1_true, args.g2_true, color="red", label="True shear")
+        plt.xlim(args.g1_true - 3 * args.g_prior_scale, args.g1_true + 3 * args.g_prior_scale)
+        plt.ylim(args.g2_true - 3 * args.g_prior_scale, args.g2_true + 3 * args.g_prior_scale)
         plt.xlabel("g1")
         plt.ylabel("g2")
         plt.title("Initial guess for the shear")
