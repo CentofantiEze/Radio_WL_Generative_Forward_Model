@@ -1081,21 +1081,17 @@ def main():
         L_z0 = jnp.sqrt(float(ndim_z))
         ss_z0 = L_z0 / ndim_z
 
-        # --- Adapt g-block ---
-        print(f"Adapting g-block MCLMC (n_warmup_g={args.n_warmup_g})...")
-        tmp_g = blackjax.mclmc(log_prob_g_adapt, step_size=ss_g0, L=L_g0)
-        g_state_adapt = tmp_g.init(g_init_first, key_init_chains[0])
-
-        def g_factory(inv_mass):
-            return mclmc_build_kernel(log_prob_g_adapt, inv_mass, isokinetic_mclachlan)
-
-        _, g_params, _ = mclmc_adj.mclmc_find_L_and_step_size(
-            mclmc_kernel=g_factory, num_steps=args.n_warmup_g,
-            state=g_state_adapt, rng_key=key_tune_g)
-        L_g, ss_g = g_params.L, g_params.step_size
-        inv_mass_g = g_params.inverse_mass_matrix
-        print(f"g-block adapted: L={L_g:.3f}, step_size={ss_g:.4f}")
-        print(f"g-block adapted: L={L_g:.3f}, step_size={ss_g:.4f}", file=log_file)
+        # --- Adapt g-block (NUTS with window adaptation) ---
+        # MCLMC performs poorly in 2D; NUTS with dual-averaging is far more robust.
+        print(f"Adapting g-block NUTS (n_warmup_g={args.n_warmup_g})...")
+        warmup_g = blackjax.window_adaptation(
+            blackjax.nuts, log_prob_g_adapt, initial_step_size=ss_g0)
+        (_, g_nuts_params), _ = warmup_g.run(
+            key_tune_g, g_init_first, num_steps=args.n_warmup_g)
+        ss_g = g_nuts_params["step_size"]
+        inv_mass_g = g_nuts_params["inverse_mass_matrix"]
+        print(f"g-block NUTS adapted: step_size={ss_g:.4f}")
+        print(f"g-block NUTS adapted: step_size={ss_g:.4f}", file=log_file)
 
         # --- Adapt z-block ---
         print(f"Adapting z-block MCLMC (n_warmup={args.n_warmup})...")
@@ -1122,11 +1118,11 @@ def main():
         g_init_all = {k: init_val[k] for k in G_KEYS}
         z_init_all = {k: v for k, v in init_val.items() if k not in G_KEYS}
 
-        tmp_g_full = blackjax.mclmc(log_prob_g_adapt, step_size=ss_g, L=L_g,
-                                    inverse_mass_matrix=inv_mass_g)
+        nuts_kernel_g = blackjax.nuts(
+            log_prob_g_adapt, step_size=ss_g, inverse_mass_matrix=inv_mass_g)
         tmp_z_full = blackjax.mclmc(log_prob_z_adapt, step_size=ss_z, L=L_z,
                                     inverse_mass_matrix=inv_mass_z)
-        last_g_states = jax.vmap(tmp_g_full.init)(g_init_all, key_init_chains)
+        last_g_states = jax.vmap(nuts_kernel_g.init)(g_init_all)
         last_z_states = jax.vmap(tmp_z_full.init)(z_init_all, key_init_chains)
 
         # --- JIT-compiled block step functions ---
@@ -1134,14 +1130,13 @@ def main():
         # repeated calls with different values of the same shape/dtype.
         @jax.jit
         def run_g_block(g_state, z_cond, keys):
-            """n_gibbs_g_steps MCLMC steps on g given fixed z_cond."""
+            """n_gibbs_g_steps NUTS steps on g given fixed z_cond."""
             def lp_g(g): return log_prob_fn({**g, **z_cond})
             # Refresh logdensity/grad for current z conditioning
             new_ld, new_grad = jax.value_and_grad(lp_g)(g_state.position)
-            g_state_fresh = IntegratorState(g_state.position, g_state.momentum,
-                                            new_ld, new_grad)
-            g_kern = mclmc_build_kernel(lp_g, inv_mass_g, isokinetic_mclachlan)
-            def step(s, k): return g_kern(k, s, L_g, ss_g)
+            g_state_fresh = g_state._replace(logdensity=new_ld, logdensity_grad=new_grad)
+            nuts_kern = blackjax.nuts(lp_g, step_size=ss_g, inverse_mass_matrix=inv_mass_g)
+            def step(s, k): return nuts_kern.step(k, s)
             return jax.lax.scan(step, g_state_fresh, keys)
 
         @jax.jit
