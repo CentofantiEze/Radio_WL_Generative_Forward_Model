@@ -173,12 +173,18 @@ def draw_NN_profile(z, flux, g1, g2, key, uv_pos, Npx, pixel_scale_radio, pixel_
     # Normalize to desired flux: total flux = sum(I) * pixel_scale^2
     y = y * flux / (jnp.sum(y) * pixel_scale_vae**2)
 
-    # Apply shear in image space
-    y_sheared = apply_shear(y, g1, g2)
+    # Apply shear via JAX-GalSim InterpolatedImage (exact k-space transform)
+    gal = galsim.InterpolatedImage(galsim.Image(y, scale=pixel_scale_vae), gsparams=gsparams)
+    gal = gal.shear(g1=g1, g2=g2)
 
-    # FFT to k-space at radio resolution and sample visibilities
-    y_kimage = image_to_kimage(y_sheared, pixel_scale_vae, Npx, pixel_scale_radio)
-    vis = y_kimage[uv_pos]
+    # Draw in Fourier space at radio resolution and sample visibilities
+    gal_kimage = gal.drawKImage(nx=Npx, ny=Npx, scale=2 * jnp.pi / (Npx * pixel_scale_radio))
+    vis = gal_kimage.array[uv_pos]
+
+    # -- Previous version used for testing faster data generation --
+    # y_sheared = apply_shear(y, g1, g2)
+    # y_kimage = image_to_kimage(y_sheared, pixel_scale_vae, Npx, pixel_scale_radio)
+    # vis = y_kimage[uv_pos]
 
     return complex_2_stack(vis)
 
