@@ -167,21 +167,32 @@ def image_to_kimage(image, pixel_scale, Npx_out, pixel_scale_out):
 
 def draw_NN_profile(z, flux, g1, g2, key, uv_pos, Npx, pixel_scale_radio, pixel_scale_vae=0.03, jitted_decode=None, gsparams=None, use_dropout=False):
     # Decode the latent vector to get the galaxy image
-    # Cast to float32 to ensure shear+FFT pipeline runs in full precision
-    y = jitted_decode(z[None,:,:], key=key if use_dropout else None)[0].astype(jnp.float32)
+    y = jitted_decode(z[None,:,:], key=key if use_dropout else None)
 
-    # Normalize to desired flux: total flux = sum(I) * pixel_scale^2
-    y = y * flux / (jnp.sum(y) * pixel_scale_vae**2)
+    # Interpolate Image to galsim object
+    y_gs = galsim.InterpolatedImage(
+        galsim.Image(y[0], scale=pixel_scale_vae), 
+        gsparams=gsparams,
+        _force_stepk=2 * np.pi / (Npx * pixel_scale_vae),
+        _force_maxk=np.pi / pixel_scale_vae
+    )
 
-    # Apply shear via JAX-GalSim InterpolatedImage (exact k-space transform)
-    gal = galsim.InterpolatedImage(galsim.Image(y, scale=pixel_scale_vae), gsparams=gsparams)
-    gal = gal.shear(g1=g1, g2=g2)
+    # Apply shear
+    y_gs = y_gs.shear(g1=g1, g2=g2)
+    
+    # Set flux
+    y_gs = y_gs.withFlux(flux)
+    
+    # Draw kimage
+    y_kimage = y_gs.drawKImage(nx=Npx, ny=Npx, scale=2*np.pi/pixel_scale_radio/Npx)
 
-    # Draw in Fourier space at radio resolution and sample visibilities
-    gal_kimage = gal.drawKImage(nx=Npx, ny=Npx, scale=2 * jnp.pi / (Npx * pixel_scale_radio))
-    vis = gal_kimage.array[uv_pos]
+    # Get array
+    y_kimage_array = y_kimage.array
+    
+    # Sample visibilities
+    vis = y_kimage_array[uv_pos]
 
-    # -- Previous version used for testing faster data generation --
+    # -- Alternative version used for faster and memory-efficient data generation --
     # y_sheared = apply_shear(y, g1, g2)
     # y_kimage = image_to_kimage(y_sheared, pixel_scale_vae, Npx, pixel_scale_radio)
     # vis = y_kimage[uv_pos]
