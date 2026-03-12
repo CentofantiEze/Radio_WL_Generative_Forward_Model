@@ -167,7 +167,7 @@ def image_to_kimage(image, pixel_scale, Npx_out, pixel_scale_out):
 
 def draw_NN_profile(z, flux, g1, g2, key, uv_pos, Npx, pixel_scale_radio, pixel_scale_vae=0.03, jitted_decode=None, gsparams=None, use_dropout=False):
     # Decode the latent vector to get the galaxy image
-    y = jitted_decode(z[None,:,:], key=key if use_dropout else None)
+    y = jitted_decode(z[None,:,:], key=key if use_dropout else None).astype(jnp.float32)
 
     # Interpolate Image to galsim object
     y_gs = galsim.InterpolatedImage(
