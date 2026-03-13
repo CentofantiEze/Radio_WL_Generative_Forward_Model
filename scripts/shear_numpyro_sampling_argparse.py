@@ -631,7 +631,7 @@ def main():
     keys = jax.random.split(key, args.num_chains)[: args.num_chains]
     init_val_ = jax.vmap(draw_params)(keys)
 
-    if args.g_chains_init is not None:
+    if args.g_chains_init is not None and "g1" in init_val_:
         g1_init, g2_init = args.g_chains_init
         # Convert from physical to MCMC space (inverse of g_rescale = g_prior_scale/g_prior_sigma)
         g1_mcmc = g1_init * args.g_prior_sigma / args.g_prior_scale
@@ -668,12 +668,14 @@ def main():
     nll = lambda params: -log_prob_fn(params)
 
     # find the MAP for chain initialization
+    has_shear = "g1" in map_init_val
+
     def find_map(init_params):
         param_labels = {k: 'shear' if k in ('g1', 'g2') else 'default' for k in init_params}
         opt_fn = optax.adam if args.map_optimizer == "adam" else optax.adafactor
 
         # Phase 0: optimize only u/flux with g1,g2 frozen
-        if args.n_steps_map_freeze_shear > 0:
+        if has_shear and args.n_steps_map_freeze_shear > 0:
             optimizer_freeze = optax.multi_transform(
                 transforms={
                     'shear': optax.set_to_zero(),
@@ -688,20 +690,23 @@ def main():
                 loss, grads = jax.value_and_grad(nll)(params)
                 updates, opt_state = optimizer_freeze.update(grads, opt_state, params)
                 params = optax.apply_updates(params, updates)
-                return (params, opt_state), (loss, params["g1"], params["g2"])
+                return (params, opt_state), loss
 
-            (init_params, _), (losses_f, g1_trace_f, g2_trace_f) = jax.lax.scan(
+            (init_params, _), losses_f = jax.lax.scan(
                 update_step_freeze, (init_params, opt_state_freeze), length=args.n_steps_map_freeze_shear
             )
 
         # Phase 1: joint optimization of all parameters
-        optimizer = optax.multi_transform(
-            transforms={
-                'shear': opt_fn(args.lr_map * args.lr_map_shear_factor),
-                'default': opt_fn(args.lr_map),
-            },
-            param_labels=param_labels,
-        )
+        if has_shear:
+            optimizer = optax.multi_transform(
+                transforms={
+                    'shear': opt_fn(args.lr_map * args.lr_map_shear_factor),
+                    'default': opt_fn(args.lr_map),
+                },
+                param_labels=param_labels,
+            )
+        else:
+            optimizer = opt_fn(args.lr_map)
 
         opt_state = optimizer.init(init_params)
 
@@ -710,43 +715,42 @@ def main():
             loss, grads = jax.value_and_grad(nll)(params)
             updates, opt_state = optimizer.update(grads, opt_state, params)
             params = optax.apply_updates(params, updates)
-            return (params, opt_state), (loss, params["g1"], params["g2"])
+            return (params, opt_state), loss
 
-        (params, _), (losses, g1_trace, g2_trace) = jax.lax.scan(
+        (params, _), losses = jax.lax.scan(
             update_step, (init_params, opt_state), length=args.n_steps_map
         )
 
         # Concatenate traces
-        if args.n_steps_map_freeze_shear > 0:
+        if has_shear and args.n_steps_map_freeze_shear > 0:
             losses = jnp.concatenate([losses_f, losses])
-            g1_trace = jnp.concatenate([g1_trace_f, g1_trace])
-            g2_trace = jnp.concatenate([g2_trace_f, g2_trace])
 
-        return params, losses, g1_trace, g2_trace
+        return params, losses
 
     map_results = jax.vmap(find_map)(map_init_val)
-    init_val, map_losses, map_g1_trace, map_g2_trace = map_results
+    init_val, map_losses = map_results
 
-    # Rescale g1,g2 traces to physical units
     g_rescale = args.g_prior_scale / args.g_prior_sigma
-    map_g1_trace_phys = map_g1_trace * g_rescale
-    map_g2_trace_phys = map_g2_trace * g_rescale
 
     # Print MAP diagnostics
-    print(
-        init_val["g1"] * g_rescale,
-        init_val["g2"] * g_rescale,
-    )
-    print(
-        f"Initial guess: g1={init_val['g1']*g_rescale}, g2={init_val['g2']*g_rescale}",
-        file=log_file,
-    )
+    if has_shear:
+        print(
+            init_val["g1"] * g_rescale,
+            init_val["g2"] * g_rescale,
+        )
+        print(
+            f"Initial guess: g1={init_val['g1']*g_rescale}, g2={init_val['g2']*g_rescale}",
+            file=log_file,
+        )
     print(f"MAP final loss (per chain): {map_losses[:, -1]}", file=log_file)
 
     if args.save_plots:
         # Plot MAP convergence: loss and g1,g2 evolution
-        fig, axes = plt.subplots(1, 3, figsize=(15, 4))
-        total_map_steps = args.n_steps_map_freeze_shear + args.n_steps_map
+        n_map_plots = 3 if has_shear else 1
+        fig, axes = plt.subplots(1, n_map_plots, figsize=(5 * n_map_plots, 4))
+        if n_map_plots == 1:
+            axes = [axes]
+        total_map_steps = (args.n_steps_map_freeze_shear if has_shear else 0) + args.n_steps_map
         steps = jnp.arange(total_map_steps)
 
         # Loss (log scale, shift to ensure positive values)
@@ -755,7 +759,7 @@ def main():
         for c in range(map_losses.shape[0]):
             axes[0].plot(steps, map_losses[c] + loss_offset, alpha=0.7, label=f"chain {c}")
         axes[0].set_yscale("log")
-        if args.n_steps_map_freeze_shear > 0:
+        if has_shear and args.n_steps_map_freeze_shear > 0:
             axes[0].axvline(args.n_steps_map_freeze_shear, color="k", ls=":", alpha=0.5, label="unfreeze g")
         axes[0].set_xlabel("MAP step")
         ylabel = "Loss (NLL)" if loss_offset == 0 else f"Loss (NLL + {loss_offset:.1f})"
@@ -763,27 +767,9 @@ def main():
         axes[0].set_title("MAP loss")
         axes[0].legend(fontsize=7)
 
-        # g1
-        for c in range(map_g1_trace_phys.shape[0]):
-            axes[1].plot(steps, map_g1_trace_phys[c], alpha=0.7, label=f"chain {c}")
-        axes[1].axhline(args.g1_true, color="k", ls="--", label="true")
-        if args.n_steps_map_freeze_shear > 0:
-            axes[1].axvline(args.n_steps_map_freeze_shear, color="k", ls=":", alpha=0.5, label="unfreeze g")
-        axes[1].set_xlabel("MAP step")
-        axes[1].set_ylabel("g1")
-        axes[1].set_title("g1 evolution")
-        axes[1].legend(fontsize=7)
-
-        # g2
-        for c in range(map_g2_trace_phys.shape[0]):
-            axes[2].plot(steps, map_g2_trace_phys[c], alpha=0.7, label=f"chain {c}")
-        axes[2].axhline(args.g2_true, color="k", ls="--", label="true")
-        if args.n_steps_map_freeze_shear > 0:
-            axes[2].axvline(args.n_steps_map_freeze_shear, color="k", ls=":", alpha=0.5, label="unfreeze g")
-        axes[2].set_xlabel("MAP step")
-        axes[2].set_ylabel("g2")
-        axes[2].set_title("g2 evolution")
-        axes[2].legend(fontsize=7)
+        if has_shear:
+            map_g1_trace_phys = jnp.array([init_val["g1"]]) * g_rescale  # no per-step trace anymore
+            map_g2_trace_phys = jnp.array([init_val["g2"]]) * g_rescale
 
         fig.tight_layout()
         fig.savefig(os.path.join(out_dir, "map_convergence.png"), dpi=150)
@@ -792,18 +778,21 @@ def main():
         np.save(os.path.join(out_dir, "radio_map_val.npy"), init_val, allow_pickle=True)
 
     if args.point_estimate:
-        g1_estimates = init_val["g1"] * g_rescale
-        g2_estimates = init_val["g2"] * g_rescale
-        np.save(os.path.join(out_dir, "map_shear_estimates.npy"), jnp.stack([g1_estimates, g2_estimates], axis=-1))
-        print(f"Point estimate g1 (per chain): {g1_estimates}")
-        print(f"Point estimate g2 (per chain): {g2_estimates}")
-        print(f"Point estimate g1 mean: {jnp.mean(g1_estimates):.6f}, g2 mean: {jnp.mean(g2_estimates):.6f}")
-        print(f"True values: g1={args.g1_true}, g2={args.g2_true}")
+        if has_shear:
+            g1_estimates = init_val["g1"] * g_rescale
+            g2_estimates = init_val["g2"] * g_rescale
+            np.save(os.path.join(out_dir, "map_shear_estimates.npy"), jnp.stack([g1_estimates, g2_estimates], axis=-1))
+            print(f"Point estimate g1 (per chain): {g1_estimates}")
+            print(f"Point estimate g2 (per chain): {g2_estimates}")
+            print(f"Point estimate g1 mean: {jnp.mean(g1_estimates):.6f}, g2 mean: {jnp.mean(g2_estimates):.6f}")
+            print(f"True values: g1={args.g1_true}, g2={args.g2_true}")
+        else:
+            print("No shear parameters — point estimate not applicable")
         print(f"Point estimate saved to {out_dir}", file=log_file)
         log_file.close()
         sys.exit(0)
 
-    if args.save_plots:
+    if args.save_plots and has_shear:
         # Plot the initial guess for the shear
         plt.figure()
         plt.scatter(
@@ -1315,13 +1304,14 @@ def main():
                 sampler_diag = f"mean|energy_change|={float(jnp.abs(info.energy_change).mean()):.3f}"
             else:
                 sampler_diag = f"accept={float(info.acceptance_rate.mean()):.3f}"
-            g1_mean = float(samples.position["g1"].mean()) * g_rescale
-            g1_std  = float(samples.position["g1"].std())  * g_rescale
-            g2_mean = float(samples.position["g2"].mean()) * g_rescale
-            g2_std  = float(samples.position["g2"].std())  * g_rescale
-            diag = (f"  {sampler_diag} | "
-                    f"g1={g1_mean:.4f}±{g1_std:.4f} | "
-                    f"g2={g2_mean:.4f}±{g2_std:.4f}")
+            diag = f"  {sampler_diag}"
+            if has_shear:
+                g1_mean = float(samples.position["g1"].mean()) * g_rescale
+                g1_std  = float(samples.position["g1"].std())  * g_rescale
+                g2_mean = float(samples.position["g2"].mean()) * g_rescale
+                g2_std  = float(samples.position["g2"].std())  * g_rescale
+                diag += (f" | g1={g1_mean:.4f}±{g1_std:.4f}"
+                         f" | g2={g2_mean:.4f}±{g2_std:.4f}")
             print(diag)
             print(diag, file=log_file)
 
@@ -1329,61 +1319,26 @@ def main():
             key: np.concatenate([sample_list[k].position[key] for k in range(args.num)], 1)
             for key in last_states.position
         }
-        print("ESS g1", blackjax.diagnostics.effective_sample_size(samples_["g1"][..., 0]))
-        print("ESS g2", blackjax.diagnostics.effective_sample_size(samples_["g2"][..., 0]))
-        print(
-            "ESS flux", blackjax.diagnostics.effective_sample_size(samples_["flux"][..., 0])
-        )
-        if args.model_profile == "VAE":
-            latent_key = "u" if args.use_flow else "z"
-            latent_ess = np.mean([
-                blackjax.diagnostics.effective_sample_size(samples_[latent_key][:, :, gal, 0, 0])
-                for gal in range(args.Ngal)
-            ])
-            print(f"ESS {latent_key} (mean over galaxies, first component)", latent_ess)
-        if args.model_profile != "VAE":
-            print(
-                "ESS hlr", blackjax.diagnostics.effective_sample_size(samples_["hlr"][..., 0])
-            )
-            print("ESS e1", blackjax.diagnostics.effective_sample_size(samples_["e1"][..., 0]))
-            print("ESS e2", blackjax.diagnostics.effective_sample_size(samples_["e2"][..., 0]))
+        # Print ESS for all parameters
+        print("ESS at the end of first loop")
         print("ESS at the end of first loop", file=log_file)
-        print(
-            "ESS g1",
-            blackjax.diagnostics.effective_sample_size(samples_["g1"][..., 0]),
-            file=log_file,
-        )
-        print(
-            "ESS g2",
-            blackjax.diagnostics.effective_sample_size(samples_["g2"][..., 0]),
-            file=log_file,
-        )
-        print(
-            "ESS flux",
-            blackjax.diagnostics.effective_sample_size(samples_["flux"][..., 0]),
-            file=log_file,
-        )
-        if args.model_profile == "VAE":
-            print(
-                f"ESS {latent_key} (mean over galaxies, first component)", latent_ess,
-                file=log_file,
-            )
-        if args.model_profile != "VAE":
-            print(
-                "ESS hlr",
-                blackjax.diagnostics.effective_sample_size(samples_["hlr"][..., 0]),
-                file=log_file,
-            )
-            print(
-                "ESS e1",
-                blackjax.diagnostics.effective_sample_size(samples_["e1"][..., 0]),
-                file=log_file,
-            )
-            print(
-                "ESS e2",
-                blackjax.diagnostics.effective_sample_size(samples_["e2"][..., 0]),
-                file=log_file,
-            )
+        for k in sorted(samples_.keys()):
+            if samples_[k].ndim >= 3 and samples_[k].shape[-1] > 1:
+                # Multi-dimensional param (e.g. z, flux per galaxy): report mean ESS over first component
+                if samples_[k].ndim == 5:  # z: (chains, steps, Ngal, d1, d2)
+                    ess_vals = [blackjax.diagnostics.effective_sample_size(samples_[k][:, :, gal, 0, 0])
+                                for gal in range(min(args.Ngal, samples_[k].shape[2]))]
+                    ess_mean = np.mean(ess_vals)
+                    print(f"ESS {k} (mean over galaxies, first component) {ess_mean:.1f}")
+                    print(f"ESS {k} (mean over galaxies, first component) {ess_mean:.1f}", file=log_file)
+                else:
+                    ess = blackjax.diagnostics.effective_sample_size(samples_[k][..., 0])
+                    print(f"ESS {k} {ess:.1f}")
+                    print(f"ESS {k} {ess:.1f}", file=log_file)
+            else:
+                ess = blackjax.diagnostics.effective_sample_size(samples_[k][..., 0])
+                print(f"ESS {k} {ess:.1f}")
+                print(f"ESS {k} {ess:.1f}", file=log_file)
 
         # extra chains
         for i in range(args.num):
@@ -1401,22 +1356,17 @@ def main():
             for key in last_states.position
         }
 
-    # labels = ["hlr", "flux", "r_ell", "angle_ell", "g1", "g2"]
-    if args.model_profile == "VAE":
-        labels = ["flux", "g1", "g2"]
-    else:
-        labels = ["hlr", "flux", "e1", "e2", "g1", "g2"]
+    # Build labels list from available sample keys (generic over model)
+    # Plot scalar/low-dim params; skip high-dim latents (z, u)
+    labels = [k for k in sorted(samples_.keys()) if k not in ("z", "u")]
 
     if args.save_plots:
-        fig, axes = plt.subplots(len(labels), figsize=(10, 7), sharex=True)
+        fig, axes = plt.subplots(max(len(labels), 1), figsize=(10, 2.5 * max(len(labels), 1)), sharex=True)
+        if len(labels) == 1:
+            axes = [axes]
         for i, label in enumerate(labels):
-            print(i, label)
             ax = axes[i]
             for k in range(args.num_chains):
-                # if label in ["g1", "g2"]:
-                #     ax.plot(samples_[label][k,:,0]*0.1, "k", alpha=0.3)
-                # else:
-                #     ax.plot(samples_[label][k,:,0], "k", alpha=0.3)
                 ax.plot(samples_[label][k, :, 0], "k", alpha=0.3)
             ax.set_xlim(0, samples_[label].shape[1])
             ax.set_ylabel(label)
@@ -1426,59 +1376,41 @@ def main():
             plt.savefig(os.path.join(out_dir, "radio_chains.png"))
         plt.close()
 
-        fig, axes = plt.subplots(len(labels), figsize=(10, 7), sharex=True)
+        # Scaled chains plot
+        fig, axes = plt.subplots(max(len(labels), 1), figsize=(10, 2.5 * max(len(labels), 1)), sharex=True)
+        if len(labels) == 1:
+            axes = [axes]
         for i, label in enumerate(labels):
             ax = axes[i]
             for k in range(args.num_chains):
-                if label == "hlr":
-                    # hlr -> jax.nn.softplus(hlr + hlr_offset) * hlr_scale + hlr_min
+                if label == "hlr" and "hlr" in samples_:
                     ax.plot(
                         jax.nn.sigmoid(samples_["hlr"][k, :, 0] / args.hlr_prior_sigma)
                         * (args.hlr_prior_max - args.hlr_prior_min)
                         + args.hlr_prior_min,
-                        "k",
-                        alpha=0.3,
-                    )
-                if label == "flux":
-                    # flux -> jax.nn.softplus(flux + flux_offset) * flux_scale + flux_min
+                        "k", alpha=0.3)
+                elif label == "flux":
                     ax.plot(
                         jax.nn.sigmoid(samples_["flux"][k, :, 0] / args.flux_prior_sigma)
                         * (args.flux_prior_max - args.flux_prior_min)
                         + args.flux_prior_min,
-                        "k",
-                        alpha=0.3,
-                    )
-                if label in ["e1", "e2"]:
-                    #  e1, e2 -> to_unit_disk
-                    e = jnp.stack(
-                        [
-                            samples_["e1"][k, :, 0] / args.ell_prior_sigma * args.ell_prior_scale,
-                            samples_["e2"][k, :, 0] / args.ell_prior_sigma * args.ell_prior_scale,
-                        ],
-                        0,
-                    )
+                        "k", alpha=0.3)
+                elif label in ["e1", "e2"] and "e1" in samples_ and "e2" in samples_:
+                    e = jnp.stack([
+                        samples_["e1"][k, :, 0] / args.ell_prior_sigma * args.ell_prior_scale,
+                        samples_["e2"][k, :, 0] / args.ell_prior_sigma * args.ell_prior_scale,
+                    ], 0)
                     e = to_unit_disk(e)
-                    if label == "e1":
-                        ax.plot(e[0], "k", alpha=0.3)
-                    else:
-                        ax.plot(e[1], "k", alpha=0.3)
-                if label in ["g1", "g2"]:
-                    # g1, g2 -> to_unit_disk
-                    g = jnp.stack(
-                        [
-                            samples_["g1"][k, :, 0] / args.g_prior_sigma * args.g_prior_scale,
-                            samples_["g2"][k, :, 0] / args.g_prior_sigma * args.g_prior_scale,
-                        ],
-                        0,
-                    )
+                    ax.plot(e[0] if label == "e1" else e[1], "k", alpha=0.3)
+                elif label in ["g1", "g2"] and "g1" in samples_ and "g2" in samples_:
+                    g = jnp.stack([
+                        samples_["g1"][k, :, 0] / args.g_prior_sigma * args.g_prior_scale,
+                        samples_["g2"][k, :, 0] / args.g_prior_sigma * args.g_prior_scale,
+                    ], 0)
                     g = to_unit_disk(g)
-                    if label == "g1":
-                        ax.plot(g[0], "k", alpha=0.3)
-                    else:
-                        ax.plot(g[1], "k", alpha=0.3)
+                    ax.plot(g[0] if label == "g1" else g[1], "k", alpha=0.3)
                 else:
-                    pass
-
+                    ax.plot(samples_[label][k, :, 0], "k", alpha=0.3)
             ax.set_xlim(0, samples_[label].shape[1])
             ax.set_ylabel(label)
             ax.yaxis.set_label_coords(-0.1, 0.5)
@@ -1487,104 +1419,62 @@ def main():
             plt.savefig(os.path.join(out_dir, "radio_chains_scaled.png"))
         plt.close()
 
-        two_truths = np.array([args.g1_true, args.g2_true])
-        samples_g = np.concatenate([samples_["g1"], samples_["g2"]], -1).reshape(
-            (-1, 2)
-        ) * (args.g_prior_scale / args.g_prior_sigma)
+        if has_shear:
+            two_truths = np.array([args.g1_true, args.g2_true])
+            samples_g = np.concatenate([samples_["g1"], samples_["g2"]], -1).reshape(
+                (-1, 2)
+            ) * (args.g_prior_scale / args.g_prior_sigma)
 
-        two_cols = ["g_1", "g_2"]
-        two_labels = [r"$\gamma_1$", r"$\gamma_2$"]
+            two_labels = [r"$\gamma_1$", r"$\gamma_2$"]
 
-        fig = plt.figure(figsize=(7, 7))
-        fig = corner.corner(samples_g, truths=two_truths, labels=two_labels, fig=fig)
-        fig.savefig(os.path.join(out_dir, "radio_corner_g.png"))
-        plt.close()
+            fig = plt.figure(figsize=(7, 7))
+            fig = corner.corner(samples_g, truths=two_truths, labels=two_labels, fig=fig)
+            fig.savefig(os.path.join(out_dir, "radio_corner_g.png"))
+            plt.close()
 
-    print("ESS g1", blackjax.diagnostics.effective_sample_size(samples_["g1"][..., 0]))
-    print("ESS g2", blackjax.diagnostics.effective_sample_size(samples_["g2"][..., 0]))
-    print(
-        "ESS flux", blackjax.diagnostics.effective_sample_size(samples_["flux"][..., 0])
-    )
-    if args.model_profile != "VAE":
-        print(
-            "ESS hlr", blackjax.diagnostics.effective_sample_size(samples_["hlr"][..., 0])
-        )
-        
-        print("ESS e1", blackjax.diagnostics.effective_sample_size(samples_["e1"][..., 0]))
-        print("ESS e2", blackjax.diagnostics.effective_sample_size(samples_["e2"][..., 0]))
+    # Final ESS for all parameters
+    print("ESS at the end of second loop")
     print("ESS at the end of second loop", file=log_file)
-    print(
-        "ESS g1",
-        blackjax.diagnostics.effective_sample_size(samples_["g1"][..., 0]),
-        file=log_file,
-    )
-    print(
-        "ESS g2",
-        blackjax.diagnostics.effective_sample_size(samples_["g2"][..., 0]),
-        file=log_file,
-    )
-    print(
-        "ESS flux",
-        blackjax.diagnostics.effective_sample_size(samples_["flux"][..., 0]),
-        file=log_file,
-    )
-    if args.model_profile != "VAE":
-        print(
-            "ESS hlr",
-            blackjax.diagnostics.effective_sample_size(samples_["hlr"][..., 0]),
-            file=log_file,
-        )
-        print(
-            "ESS e1",
-            blackjax.diagnostics.effective_sample_size(samples_["e1"][..., 0]),
-            file=log_file,
-        )
-        print(
-            "ESS e2",
-            blackjax.diagnostics.effective_sample_size(samples_["e2"][..., 0]),
-            file=log_file,
-        )
+    for k in sorted(samples_.keys()):
+        if samples_[k].ndim == 5:  # z/u: (chains, steps, Ngal, d1, d2)
+            ess_vals = [blackjax.diagnostics.effective_sample_size(samples_[k][:, :, gal, 0, 0])
+                        for gal in range(min(args.Ngal, samples_[k].shape[2]))]
+            ess_mean = np.mean(ess_vals)
+            print(f"ESS {k} (mean over galaxies, first component) {ess_mean:.1f}")
+            print(f"ESS {k} (mean over galaxies, first component) {ess_mean:.1f}", file=log_file)
+        else:
+            ess = blackjax.diagnostics.effective_sample_size(samples_[k][..., 0])
+            print(f"ESS {k} {ess:.1f}")
+            print(f"ESS {k} {ess:.1f}", file=log_file)
 
-    flatchain = np.std(samples_["g1"], axis=1) < 1e-4
-    print("Flatchains:")
-    print(flatchain)
-    print("Flatchains:", file=log_file)
-    print(flatchain, file=log_file)
+    if has_shear:
+        flatchain = np.std(samples_["g1"], axis=1) < 1e-4
+        print("Flatchains:")
+        print(flatchain)
+        print("Flatchains:", file=log_file)
+        print(flatchain, file=log_file)
 
-    # Compute posterior density estimation shear samples
-    g1_scaled = samples_["g1"][np.where(flatchain == False),:]
-    g2_scaled = samples_["g2"][np.where(flatchain == False),:]
-    samples_g_scaled = np.concatenate([g1_scaled, g2_scaled], -1).reshape((-1,2)) / args.g_prior_sigma * args.g_prior_scale
-    # g_mean = np.mean(samples_g_scaled, axis=0)
-    # g_std = np.sqrt(np.diag(np.cov(samples_g_scaled, rowvar=False)))
-    # print(f"Shear mean: g1={g_mean[0]}, g2={g_mean[1]}")
-    # print(f"Shear std: g1={g_std[0]}, g2={g_std[1]}")
-    # print(f"Shear mean: g1={g_mean[0]}, g2={g_mean[1]}", file=log_file)
-    # print(f"Shear std: g1={g_std[0]}, g2={g_std[1]}", file=log_file)
-    # np.savez(
-    #     os.path.join(out_dir, "radio_shear_stats.npz"),
-    #     g_mean=g_mean,
-    #     g_std=g_std,
-    #     flatchain=flatchain,
-    # )
+        # Compute posterior density estimation shear samples
+        g1_scaled = samples_["g1"][np.where(flatchain == False),:]
+        g2_scaled = samples_["g2"][np.where(flatchain == False),:]
+        samples_g_scaled = np.concatenate([g1_scaled, g2_scaled], -1).reshape((-1,2)) / args.g_prior_sigma * args.g_prior_scale
 
-    # Fit and save GMM posterior density
-    print("Fitting GMM to shear posterior...")
-    gmm_params = fit_gmm(samples_g_scaled, n_components=5)
-    save_gmm(gmm_params, os.path.join(out_dir, "radio_shear_gmm.npz"))
-    print(f"GMM saved with {len(gmm_params['weights'])} components")
-    print(f"GMM saved with {len(gmm_params['weights'])} components", file=log_file)
+        # Fit and save GMM posterior density
+        print("Fitting GMM to shear posterior...")
+        gmm_params = fit_gmm(samples_g_scaled, n_components=5)
+        save_gmm(gmm_params, os.path.join(out_dir, "radio_shear_gmm.npz"))
+        print(f"GMM saved with {len(gmm_params['weights'])} components")
+        print(f"GMM saved with {len(gmm_params['weights'])} components", file=log_file)
 
-    if args.save_plots:
-        # Plot GMM contours
-        fig, ax = plt.subplots(1, 1, figsize=(6, 6))
-        plot_gmm_contours(
-            gmm_params, ax=ax,
-            true_g=(args.g1_true, args.g2_true),
-        )
-        ax.set_title("GMM Posterior Density")
-        fig.savefig(os.path.join(out_dir, "gmm_contours.png"), dpi=150, bbox_inches="tight")
-        plt.close(fig)
+        if args.save_plots:
+            fig, ax = plt.subplots(1, 1, figsize=(6, 6))
+            plot_gmm_contours(
+                gmm_params, ax=ax,
+                true_g=(args.g1_true, args.g2_true),
+            )
+            ax.set_title("GMM Posterior Density")
+            fig.savefig(os.path.join(out_dir, "gmm_contours.png"), dpi=150, bbox_inches="tight")
+            plt.close(fig)
 
     # Save samples
     if args.save_samples:
