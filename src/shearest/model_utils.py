@@ -226,6 +226,96 @@ def model_fn_VAE(
     return numpyro.sample("obs", dist.Normal(im_gal, noise_uv), obs=obs)
 
 
+def model_fn_VAE_noshear(
+    Ngal=None,
+    Npx=None,
+    pixel_scale_radio=None,
+    pixel_scale_vae=None,
+    uv_pos=None,
+    noise_uv=None,
+    obs=None,
+    flux_sigma=None,
+    flux_max=None,
+    flux_min=None,
+    latent_dim=None,
+    latent_mean=None,
+    jitted_decode=None,
+    gsparams=None,
+    run_type="sequential",
+    batch_size=1,
+    use_dropout=False,
+):
+    z = numpyro.sample("z", dist.Normal(jnp.zeros((Ngal, latent_dim, latent_dim)), jnp.ones((Ngal, latent_dim, latent_dim)))) + latent_mean
+
+    # No shear — g1=g2=0
+    g = jnp.zeros((2, Ngal))
+
+    # flux
+    flux_z = numpyro.sample("flux", dist.Normal(jnp.zeros((Ngal,)), flux_sigma * jnp.ones((Ngal,))))
+    flux = flux_min + jax.nn.sigmoid(flux_z / flux_sigma) * (flux_max - flux_min)
+
+    if use_dropout:
+        key = numpyro.prng_key()
+        subkeys = split(key, Ngal)
+    else:
+        subkeys = jnp.zeros((Ngal, 2), dtype=jnp.uint32)
+
+    draw = partial(draw_NN_profile,
+                   uv_pos=uv_pos,
+                   Npx=Npx,
+                   pixel_scale_radio=pixel_scale_radio,
+                   pixel_scale_vae=pixel_scale_vae,
+                   jitted_decode=jitted_decode,
+                   gsparams=gsparams,
+                   use_dropout=use_dropout)
+
+    if run_type == "sequential":
+        def scan_body(carry, sliced_inputs):
+            z_i, flux_i, g0_i, g1_i, subkey_i = sliced_inputs
+            im_gal_i = checkpoint(draw)(z_i, flux_i, g0_i, g1_i, subkey_i)
+            return carry, im_gal_i
+        scan_inputs = (z, flux, g[0], g[1], subkeys)
+        _, im_gal = jax.lax.scan(scan_body, None, scan_inputs)
+
+    elif run_type == "parallel":
+        im_gal = jax.vmap(draw)(z, flux, g[0], g[1], subkeys)
+
+    elif run_type == "batch":
+        pad_size = (batch_size - (Ngal % batch_size)) % batch_size
+        if pad_size > 0:
+            z = jnp.pad(z, ((0, pad_size), (0, 0), (0, 0)), mode='constant')
+            flux = jnp.pad(flux, (0, pad_size), mode='constant')
+            g = jnp.pad(g, ((0, 0), (0, pad_size)), mode='constant')
+
+        num_batches = z.shape[0] // batch_size
+        if pad_size > 0:
+            subkeys = jnp.pad(subkeys, ((0, pad_size), (0, 0)), mode='constant')
+        subkeys_batched = subkeys.reshape((num_batches, batch_size, -1))
+
+        z_batched = z.reshape((num_batches, batch_size, latent_dim, latent_dim))
+        flux_batched = flux.reshape((num_batches, batch_size))
+        g_batched = g.reshape((2, num_batches, batch_size))
+        g_scan_inp = jnp.transpose(g_batched, (1, 0, 2))
+
+        vmapped_draw = jax.vmap(draw)
+
+        def batch_scan_body(carry, batch_inputs):
+            z_b, flux_b, g_b, keys_b = batch_inputs
+            im_gal_batch = vmapped_draw(z_b, flux_b, g_b[0], g_b[1], keys_b)
+            return carry, im_gal_batch
+
+        scan_inputs = (z_batched, flux_batched, g_scan_inp, subkeys_batched)
+        _, im_gal_batched = jax.lax.scan(batch_scan_body, None, scan_inputs)
+
+        im_gal_padded = im_gal_batched.reshape((-1, 2, im_gal_batched.shape[-1]))
+        im_gal = im_gal_padded[:Ngal]
+
+    else:
+        raise ValueError("run_type must be 'sequential', 'parallel', or 'batch'")
+
+    return numpyro.sample("obs", dist.Normal(im_gal, noise_uv), obs=obs)
+
+
 def model_fn_VAE_flow(
     Ngal=None,
     Npx=None,

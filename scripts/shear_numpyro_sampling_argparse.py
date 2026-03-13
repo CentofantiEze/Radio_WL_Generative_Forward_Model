@@ -33,7 +33,7 @@ import corner
 
 from src.shearest.data_gen_utils import gen_gal_dataset
 from src.shearest.func_utils import stack_2_complex, to_unit_disk
-from src.shearest.model_utils import model_fn, model_fn_VAE, model_fn_VAE_flow
+from src.shearest.model_utils import model_fn, model_fn_VAE, model_fn_VAE_noshear, model_fn_VAE_flow
 from src.shearest.psf_utils import compute_radio_uv_mask
 from src.shearest.posterior_utils import fit_gmm, save_gmm, plot_gmm_contours
 
@@ -284,6 +284,8 @@ def main():
     parser.add_argument("--n_steps_map_freeze_shear", type=int, default=0, help="Initial MAP steps with g1,g2 frozen (optimize only u/flux, 0=disabled)")
     parser.add_argument("--g_chains_init", type=float, nargs=2, default=None, metavar=("G1", "G2"), help="Initialize all chains at this (g1, g2) in physical units. Converted to MCMC space via g_prior_sigma/g_prior_scale.")
     parser.add_argument("--point_estimate", action="store_true", default=False, help="Stop after MAP: save g1,g2 estimates and exit (no MCMC)")
+    # DEBUG ONLY — remove this flag once z mixing is validated
+    parser.add_argument("--no_shear", action="store_true", default=False, help="[DEBUG] Disable shear (g1=g2=0) to test z/flux sampling in isolation")
     parser.add_argument("--sampler", type=str, default="ghmc", choices=["ghmc", "mclmc", "gibbs"],
                         help="Sampler to use: ghmc, mclmc, or gibbs (Gibbs block sampler)")
     parser.add_argument("--n_gibbs_g_steps", type=int, default=10,
@@ -492,7 +494,31 @@ def main():
             print(f"Flow condition: {flow_condition}", file=log_file)
 
         # Initialize the forward model
-        if args.use_flow:
+        # DEBUG ONLY — --no_shear uses model_fn_VAE_noshear to test z/flux sampling; remove later
+        if args.no_shear:
+            print("WARNING: --no_shear is set, g1=g2=0 (debug mode)")
+            print("WARNING: --no_shear is set, g1=g2=0 (debug mode)", file=log_file)
+            model = partial(
+                model_fn_VAE_noshear,
+                Ngal=args.Ngal,
+                Npx=args.Npx,
+                pixel_scale_radio=args.pixel_scale,
+                pixel_scale_vae=args.pixel_scale_vae,
+                uv_pos=uv_pos,
+                noise_uv=args.noise_uv,
+                obs=data,
+                flux_sigma=args.flux_prior_sigma,
+                flux_max=args.flux_prior_max,
+                flux_min=args.flux_prior_min,
+                latent_dim=args.latent_dim,
+                latent_mean=args.latent_mean,
+                jitted_decode=jitted_decode,
+                gsparams=gsparams,
+                run_type=args.vae_model_inference_mode,
+                batch_size=args.vae_inference_batch_size,
+                use_dropout=args.use_dropout,
+            )
+        elif args.use_flow:
             model = partial(
                 model_fn_VAE_flow,
                 Ngal=args.Ngal,
@@ -844,7 +870,20 @@ def main():
                 ae,
             )
             jitted_decode = eqx.filter_jit(lambda z, key: ae.decode(z.astype(jnp.float16), key=key))
-            if args.use_flow:
+            # DEBUG ONLY — --no_shear uses model_fn_VAE_noshear; remove later
+            if args.no_shear:
+                model = partial(
+                    model_fn_VAE_noshear,
+                    Ngal=args.Ngal, Npx=args.Npx,
+                    pixel_scale_radio=args.pixel_scale, pixel_scale_vae=args.pixel_scale_vae,
+                    uv_pos=uv_pos, noise_uv=args.noise_uv, obs=data,
+                    flux_sigma=args.flux_prior_sigma, flux_max=args.flux_prior_max, flux_min=args.flux_prior_min,
+                    latent_dim=args.latent_dim, latent_mean=args.latent_mean,
+                    jitted_decode=jitted_decode, gsparams=gsparams,
+                    run_type=args.vae_model_inference_mode, batch_size=args.vae_inference_batch_size,
+                    use_dropout=args.use_dropout,
+                )
+            elif args.use_flow:
                 model = partial(
                     model_fn_VAE_flow,
                     Ngal=args.Ngal, Npx=args.Npx,
@@ -971,7 +1010,20 @@ def main():
                 ae,
             )
             jitted_decode = eqx.filter_jit(lambda z, key: ae.decode(z.astype(jnp.float16), key=key))
-            if args.use_flow:
+            # DEBUG ONLY — --no_shear uses model_fn_VAE_noshear; remove later
+            if args.no_shear:
+                model = partial(
+                    model_fn_VAE_noshear,
+                    Ngal=args.Ngal, Npx=args.Npx,
+                    pixel_scale_radio=args.pixel_scale, pixel_scale_vae=args.pixel_scale_vae,
+                    uv_pos=uv_pos, noise_uv=args.noise_uv, obs=data,
+                    flux_sigma=args.flux_prior_sigma, flux_max=args.flux_prior_max, flux_min=args.flux_prior_min,
+                    latent_dim=args.latent_dim, latent_mean=args.latent_mean,
+                    jitted_decode=jitted_decode, gsparams=gsparams,
+                    run_type=args.vae_model_inference_mode, batch_size=args.vae_inference_batch_size,
+                    use_dropout=args.use_dropout,
+                )
+            elif args.use_flow:
                 model = partial(
                     model_fn_VAE_flow,
                     Ngal=args.Ngal, Npx=args.Npx,
