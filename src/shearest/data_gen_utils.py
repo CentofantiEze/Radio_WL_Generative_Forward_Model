@@ -184,7 +184,7 @@ def draw_NN_profile(z, flux, g1, g2, key, uv_pos, Npx, pixel_scale_radio, pixel_
     y_gs = y_gs.withFlux(flux)
     
     # Draw kimage
-    y_kimage = y_gs.drawKImage(nx=Npx, ny=Npx, scale=2*np.pi/pixel_scale_radio/Npx)
+    y_kimage = y_gs.drawKImage(nx=Npx, ny=Npx, scale=2*np.pi/pixel_scale_vae/Npx)
 
     # Get array
     y_kimage_array = y_kimage.array
