@@ -218,7 +218,9 @@ def main():
     parser.add_argument("--t0", type=float, default=0, help="Start time")
     parser.add_argument("--n_times", type=int, default=4, help="Number of times")
     parser.add_argument("--f", type=float, default=1.4e9, help="Frequency")
-    parser.add_argument("--df", type=float, default=1e8, help="Frequency bandwidth")
+    parser.add_argument("--df", type=float, default=None, help="Frequency bandwidth")
+    parser.add_argument("--array_lat", type=float, default=-30, help="Latitude of the array in degrees (used for UV mask generation)")
+    parser.add_argument("--array_dec", type=float, default=-30, help="Declination of the target field in degrees (used for UV mask generation)")
     parser.add_argument(
         "--n_freqs", type=int, default=1, help="Number of frequency channels"
     )
@@ -395,6 +397,8 @@ def main():
         n_times=args.n_times,
         f=args.f,
         df=args.df,
+        lat=args.array_lat*np.pi/180,
+        dec=args.array_dec*np.pi/180,
         n_freqs=args.n_freqs,
         seed=args.radio_array_seed,
         antenna=args.antenna_type,
@@ -673,14 +677,17 @@ def main():
 
     @jax.jit
     def log_prob_fn(params):
-        return numpyro.infer.util.log_density(
-            seeded_model,
-            (),
-            {
-                "obs": data,
-            },
-            params,
-        )[0]
+        @jax.checkpoint
+        def _log_density(params):
+            return numpyro.infer.util.log_density(
+                seeded_model,
+                (),
+                {
+                    "obs": data,
+                },
+                params,
+            )[0]
+        return _log_density(params)
 
     print(f"MAP optimizer: {args.map_optimizer}, lr: {args.lr_map} (shear factor: {args.lr_map_shear_factor}x)", file=log_file)
     print(f"MAP number of steps: {args.n_steps_map}", file=log_file)
@@ -937,9 +944,12 @@ def main():
 
             @jax.jit
             def log_prob_fn(params):
-                return numpyro.infer.util.log_density(
-                    seeded_model, (), {"obs": data}, params,
-                )[0]
+                @jax.checkpoint
+                def _log_density(params):
+                    return numpyro.infer.util.log_density(
+                        seeded_model, (), {"obs": data}, params,
+                    )[0]
+                return _log_density(params)
 
             print("VAE decoder converted to float16 for sampling")
 
@@ -1090,9 +1100,12 @@ def main():
 
             @jax.jit
             def log_prob_fn(params):
-                return numpyro.infer.util.log_density(
-                    seeded_model, (), {"obs": data}, params,
-                )[0]
+                @jax.checkpoint
+                def _log_density(params):
+                    return numpyro.infer.util.log_density(
+                        seeded_model, (), {"obs": data}, params,
+                    )[0]
+                return _log_density(params)
 
             print("VAE decoder converted to float16 for sampling")
 
