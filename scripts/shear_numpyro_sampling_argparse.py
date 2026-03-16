@@ -502,7 +502,6 @@ def main():
                 model_fn_VAE_noshear,
                 Ngal=args.Ngal,
                 Npx=args.Npx,
-                pixel_scale_radio=args.pixel_scale,
                 pixel_scale_vae=args.pixel_scale_vae,
                 uv_pos=uv_pos,
                 noise_uv=args.noise_uv,
@@ -523,7 +522,6 @@ def main():
                 model_fn_VAE_flow,
                 Ngal=args.Ngal,
                 Npx=args.Npx,
-                pixel_scale_radio=args.pixel_scale,
                 pixel_scale_vae=args.pixel_scale_vae,
                 uv_pos=uv_pos,
                 noise_uv=args.noise_uv,
@@ -547,7 +545,6 @@ def main():
                 model_fn_VAE,
                 Ngal=args.Ngal,
                 Npx=args.Npx,
-                pixel_scale_radio=args.pixel_scale,
                 pixel_scale_vae=args.pixel_scale_vae,
                 uv_pos=uv_pos,
                 noise_uv=args.noise_uv,
@@ -864,7 +861,7 @@ def main():
                 model = partial(
                     model_fn_VAE_noshear,
                     Ngal=args.Ngal, Npx=args.Npx,
-                    pixel_scale_radio=args.pixel_scale, pixel_scale_vae=args.pixel_scale_vae,
+                    pixel_scale_vae=args.pixel_scale_vae,
                     uv_pos=uv_pos, noise_uv=args.noise_uv, obs=data,
                     flux_sigma=args.flux_prior_sigma, flux_max=args.flux_prior_max, flux_min=args.flux_prior_min,
                     latent_dim=args.latent_dim, latent_mean=args.latent_mean,
@@ -876,7 +873,7 @@ def main():
                 model = partial(
                     model_fn_VAE_flow,
                     Ngal=args.Ngal, Npx=args.Npx,
-                    pixel_scale_radio=args.pixel_scale, pixel_scale_vae=args.pixel_scale_vae,
+                    pixel_scale_vae=args.pixel_scale_vae,
                     uv_pos=uv_pos, noise_uv=args.noise_uv, obs=data,
                     g_sigma=args.g_prior_sigma, g_scale=args.g_prior_scale,
                     flux_sigma=args.flux_prior_sigma, flux_max=args.flux_prior_max, flux_min=args.flux_prior_min,
@@ -890,7 +887,7 @@ def main():
                 model = partial(
                     model_fn_VAE,
                     Ngal=args.Ngal, Npx=args.Npx,
-                    pixel_scale_radio=args.pixel_scale, pixel_scale_vae=args.pixel_scale_vae,
+                    pixel_scale_vae=args.pixel_scale_vae,
                     uv_pos=uv_pos, noise_uv=args.noise_uv, obs=data,
                     g_sigma=args.g_prior_sigma, g_scale=args.g_prior_scale,
                     flux_sigma=args.flux_prior_sigma, flux_max=args.flux_prior_max, flux_min=args.flux_prior_min,
@@ -1004,7 +1001,7 @@ def main():
                 model = partial(
                     model_fn_VAE_noshear,
                     Ngal=args.Ngal, Npx=args.Npx,
-                    pixel_scale_radio=args.pixel_scale, pixel_scale_vae=args.pixel_scale_vae,
+                    pixel_scale_vae=args.pixel_scale_vae,
                     uv_pos=uv_pos, noise_uv=args.noise_uv, obs=data,
                     flux_sigma=args.flux_prior_sigma, flux_max=args.flux_prior_max, flux_min=args.flux_prior_min,
                     latent_dim=args.latent_dim, latent_mean=args.latent_mean,
@@ -1016,7 +1013,7 @@ def main():
                 model = partial(
                     model_fn_VAE_flow,
                     Ngal=args.Ngal, Npx=args.Npx,
-                    pixel_scale_radio=args.pixel_scale, pixel_scale_vae=args.pixel_scale_vae,
+                    pixel_scale_vae=args.pixel_scale_vae,
                     uv_pos=uv_pos, noise_uv=args.noise_uv, obs=data,
                     g_sigma=args.g_prior_sigma, g_scale=args.g_prior_scale,
                     flux_sigma=args.flux_prior_sigma, flux_max=args.flux_prior_max, flux_min=args.flux_prior_min,
@@ -1030,7 +1027,7 @@ def main():
                 model = partial(
                     model_fn_VAE,
                     Ngal=args.Ngal, Npx=args.Npx,
-                    pixel_scale_radio=args.pixel_scale, pixel_scale_vae=args.pixel_scale_vae,
+                    pixel_scale_vae=args.pixel_scale_vae,
                     uv_pos=uv_pos, noise_uv=args.noise_uv, obs=data,
                     g_sigma=args.g_prior_sigma, g_scale=args.g_prior_scale,
                     flux_sigma=args.flux_prior_sigma, flux_max=args.flux_prior_max, flux_min=args.flux_prior_min,

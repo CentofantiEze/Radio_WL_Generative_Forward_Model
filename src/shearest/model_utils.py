@@ -115,7 +115,6 @@ def model_fn(
 def model_fn_VAE(
     Ngal=None,
     Npx=None,
-    pixel_scale_radio=None,
     pixel_scale_vae=None,
     uv_pos=None,
     noise_uv=None,
@@ -169,7 +168,6 @@ def model_fn_VAE(
     draw = partial(draw_NN_profile,
                    uv_pos=uv_pos,
                    Npx=Npx,
-                   pixel_scale_radio=pixel_scale_radio,
                    pixel_scale_vae=pixel_scale_vae,
                    jitted_decode=jitted_decode,
                    gsparams=gsparams,
@@ -229,7 +227,6 @@ def model_fn_VAE(
 def model_fn_VAE_noshear(
     Ngal=None,
     Npx=None,
-    pixel_scale_radio=None,
     pixel_scale_vae=None,
     uv_pos=None,
     noise_uv=None,
@@ -263,7 +260,6 @@ def model_fn_VAE_noshear(
     draw = partial(draw_NN_profile,
                    uv_pos=uv_pos,
                    Npx=Npx,
-                   pixel_scale_radio=pixel_scale_radio,
                    pixel_scale_vae=pixel_scale_vae,
                    jitted_decode=jitted_decode,
                    gsparams=gsparams,
@@ -319,7 +315,6 @@ def model_fn_VAE_noshear(
 def model_fn_VAE_flow(
     Ngal=None,
     Npx=None,
-    pixel_scale_radio=None,
     pixel_scale_vae=None,
     uv_pos=None,
     noise_uv=None,
@@ -374,7 +369,6 @@ def model_fn_VAE_flow(
     draw = partial(draw_NN_profile,
                    uv_pos=uv_pos,
                    Npx=Npx,
-                   pixel_scale_radio=pixel_scale_radio,
                    pixel_scale_vae=pixel_scale_vae,
                    jitted_decode=jitted_decode,
                    gsparams=gsparams,
