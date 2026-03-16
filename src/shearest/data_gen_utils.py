@@ -74,10 +74,11 @@ def draw_spergel_profile(n, hlr, flux, e1, e2, g1, g2, uv_pos, Npx, pixel_scale)
 
     return complex_2_stack(vis)
 
-def draw_HST_profiles(Ngal, dataset_dir, flux_batch, g1, g2, uv_pos, Npx, pixel_scale_hst=0.03, profile_type="real", sample="23.5"):
+def draw_HST_profiles(Ngal, dataset_dir, flux_batch, g1, g2, uv_pos, Npx, pixel_scale_hst=0.03, profile_type="real", sample="23.5", seed=None):
 
     catalog = gs.COSMOSCatalog(sample=sample, dir=dataset_dir, min_flux=20., min_hlr=0.2, max_hlr=1.)
-    indices = np.random.choice(catalog.getNObjects(), Ngal, replace=False)
+    rng = np.random.default_rng(seed)
+    indices = rng.choice(catalog.getNObjects(), Ngal, replace=False)
     im_gal = []
     if profile_type == "cosmos":
         gal_type = 'parametric'
@@ -270,6 +271,7 @@ def gen_gal_dataset(
     g2=None,
     profile_type=None,
     n=None,
+    cosmos_seed=None,
 ):
 
     hlr_batch, flux_batch, e_batch, n_batch = sample_galaxy_params(
@@ -288,15 +290,16 @@ def gen_gal_dataset(
     if profile_type == "real" or profile_type == "cosmos":
         
         im_gal, indices = draw_HST_profiles(
-            Ngal=Ngal, 
-            dataset_dir=cosmos_dataset_dir, 
-            flux_batch=flux_batch, 
-            g1=g1, 
-            g2=g2, 
-            uv_pos=uv_pos, 
-            Npx=Npx, 
-            profile_type=profile_type, 
-            sample=cosmos_sample
+            Ngal=Ngal,
+            dataset_dir=cosmos_dataset_dir,
+            flux_batch=flux_batch,
+            g1=g1,
+            g2=g2,
+            uv_pos=uv_pos,
+            Npx=Npx,
+            profile_type=profile_type,
+            sample=cosmos_sample,
+            seed=cosmos_seed,
         )
         data_params = {
             "profile_type": profile_type,

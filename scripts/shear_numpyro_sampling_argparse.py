@@ -446,6 +446,7 @@ def main():
         g2=args.g2_true,
         profile_type=args.data_profile,
         n=args.sersic_index,
+        cosmos_seed=args.seed,
     )
     seeded_model_data_gen = seed(model_data_gen, key)
     # Conditioning model to generate observation with [g1, g2]
