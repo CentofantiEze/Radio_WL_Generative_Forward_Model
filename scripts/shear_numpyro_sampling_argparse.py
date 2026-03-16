@@ -33,7 +33,7 @@ import corner
 
 from src.shearest.data_gen_utils import gen_gal_dataset
 from src.shearest.func_utils import stack_2_complex, to_unit_disk
-from src.shearest.model_utils import model_fn, model_fn_VAE, model_fn_VAE_noshear, model_fn_VAE_flow
+from src.shearest.model_utils import model_fn, model_fn_VAE, model_fn_VAE_noshear, model_fn_VAE_flow, model_fn_VAE_flow_noshear
 from src.shearest.psf_utils import compute_radio_uv_mask
 from src.shearest.posterior_utils import fit_gmm, save_gmm, plot_gmm_contours
 
@@ -494,10 +494,33 @@ def main():
             print(f"Flow condition: {flow_condition}", file=log_file)
 
         # Initialize the forward model
-        # DEBUG ONLY — --no_shear uses model_fn_VAE_noshear to test z/flux sampling; remove later
-        if args.no_shear:
-            print("WARNING: --no_shear is set, g1=g2=0 (debug mode)")
-            print("WARNING: --no_shear is set, g1=g2=0 (debug mode)", file=log_file)
+        # DEBUG ONLY — --no_shear uses noshear model variants to test z/u/flux sampling; remove later
+        if args.no_shear and args.use_flow:
+            print("WARNING: --no_shear is set with flow, g1=g2=0, sampling u (debug mode)")
+            print("WARNING: --no_shear is set with flow, g1=g2=0, sampling u (debug mode)", file=log_file)
+            model = partial(
+                model_fn_VAE_flow_noshear,
+                Ngal=args.Ngal,
+                Npx=args.Npx,
+                pixel_scale_vae=args.pixel_scale_vae,
+                uv_pos=uv_pos,
+                noise_uv=args.noise_uv,
+                obs=data,
+                flux_sigma=args.flux_prior_sigma,
+                flux_max=args.flux_prior_max,
+                flux_min=args.flux_prior_min,
+                latent_dim=args.latent_dim,
+                jitted_decode=jitted_decode,
+                gsparams=gsparams,
+                run_type=args.vae_model_inference_mode,
+                batch_size=args.vae_inference_batch_size,
+                use_dropout=args.use_dropout,
+                flow_forward=flow_forward,
+                flow_condition=flow_condition,
+            )
+        elif args.no_shear:
+            print("WARNING: --no_shear is set, g1=g2=0, sampling z (debug mode)")
+            print("WARNING: --no_shear is set, g1=g2=0, sampling z (debug mode)", file=log_file)
             model = partial(
                 model_fn_VAE_noshear,
                 Ngal=args.Ngal,
@@ -856,8 +879,21 @@ def main():
                 ae,
             )
             jitted_decode = eqx.filter_jit(lambda z, key: ae.decode(z.astype(jnp.float16), key=key))
-            # DEBUG ONLY — --no_shear uses model_fn_VAE_noshear; remove later
-            if args.no_shear:
+            # DEBUG ONLY — --no_shear uses noshear model variants; remove later
+            if args.no_shear and args.use_flow:
+                model = partial(
+                    model_fn_VAE_flow_noshear,
+                    Ngal=args.Ngal, Npx=args.Npx,
+                    pixel_scale_vae=args.pixel_scale_vae,
+                    uv_pos=uv_pos, noise_uv=args.noise_uv, obs=data,
+                    flux_sigma=args.flux_prior_sigma, flux_max=args.flux_prior_max, flux_min=args.flux_prior_min,
+                    latent_dim=args.latent_dim,
+                    jitted_decode=jitted_decode, gsparams=gsparams,
+                    run_type=args.vae_model_inference_mode, batch_size=args.vae_inference_batch_size,
+                    use_dropout=args.use_dropout,
+                    flow_forward=flow_forward, flow_condition=flow_condition,
+                )
+            elif args.no_shear:
                 model = partial(
                     model_fn_VAE_noshear,
                     Ngal=args.Ngal, Npx=args.Npx,
@@ -996,8 +1032,21 @@ def main():
                 ae,
             )
             jitted_decode = eqx.filter_jit(lambda z, key: ae.decode(z.astype(jnp.float16), key=key))
-            # DEBUG ONLY — --no_shear uses model_fn_VAE_noshear; remove later
-            if args.no_shear:
+            # DEBUG ONLY — --no_shear uses noshear model variants; remove later
+            if args.no_shear and args.use_flow:
+                model = partial(
+                    model_fn_VAE_flow_noshear,
+                    Ngal=args.Ngal, Npx=args.Npx,
+                    pixel_scale_vae=args.pixel_scale_vae,
+                    uv_pos=uv_pos, noise_uv=args.noise_uv, obs=data,
+                    flux_sigma=args.flux_prior_sigma, flux_max=args.flux_prior_max, flux_min=args.flux_prior_min,
+                    latent_dim=args.latent_dim,
+                    jitted_decode=jitted_decode, gsparams=gsparams,
+                    run_type=args.vae_model_inference_mode, batch_size=args.vae_inference_batch_size,
+                    use_dropout=args.use_dropout,
+                    flow_forward=flow_forward, flow_condition=flow_condition,
+                )
+            elif args.no_shear:
                 model = partial(
                     model_fn_VAE_noshear,
                     Ngal=args.Ngal, Npx=args.Npx,
