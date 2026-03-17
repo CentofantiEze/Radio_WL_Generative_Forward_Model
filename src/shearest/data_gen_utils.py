@@ -90,6 +90,8 @@ def draw_HST_profiles(Ngal, dataset_dir, flux_batch, g1, g2, uv_pos, Npx, pixel_
         # psf = gal_.original_psf
         # gal_ = gs.Convolve([gal_, psf])
         # Use the original flux
+        # Convolve with gaussian to ensure finite support in Fourier space (for numerical stability)
+        gal_ = gs.Convolve([gal_, gs.Gaussian(sigma=2*pixel_scale_hst)])
         gal_ = gal_.withFlux(flux_batch[i])
         gal_ = gal_.shear(g1=g1, g2=g2)
         gal_kimage_ = gal_.drawKImage(nx=Npx, ny=Npx, scale=2*np.pi/pixel_scale_hst/Npx).array
