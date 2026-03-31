@@ -137,22 +137,27 @@ def sample_galaxy_params(
         params = np.load(TRECS_fit_dir, allow_pickle=True)[()]
         u = jnp.ones((Ngal,))  # sampling galaxies all at once
 
-        hlr_fit = params["beta_fit_hlr"]
+        # The fit was done with scipy lognorm, which has a different parameterization than Numpyro.
+        # log(Y - loc) ~ Normal(log(scale), shape^2)
+        hlr_fit = params["lognorm_fit_hlr"]
+        lognorm_loc = np.log(hlr_fit["scale"])
+        lognorm_scale = hlr_fit["shape"]
+        lognorm_shift = hlr_fit["loc"]
         hlr = (
             numpyro.sample(
-                "hlr", dist.Beta(hlr_fit["a"], hlr_fit["b"]), sample_shape=(Ngal,)
+                "hlr", dist.LogNormal(lognorm_loc, lognorm_scale), sample_shape=(Ngal,)
             )
-            * hlr_fit["scale"]
-            + hlr_fit["loc"]
+            + lognorm_shift
         )
 
-        flux_fit = params["beta_fit_flux"]
+        flux_fit = params["expon_fit_flux"]
+        flux_rate = 1/flux_fit["scale"]  # Exponential distribution in scipy is parameterized by scale, while in numpyro it's parameterized by rate (1/scale)
+        flux_shift = flux_fit["loc"]
         flux = (
             numpyro.sample(
-                "flux", dist.Beta(flux_fit["a"], flux_fit["b"]), sample_shape=(Ngal,)
+                "flux", dist.Exponential(flux_rate), sample_shape=(Ngal,)
             )
-            * flux_fit["scale"]
-            + flux_fit["loc"]
+            + flux_shift
         )
 
         e1 = numpyro.sample("e1", dist.Normal(0.0 * u, 1.0 * u)) * ell_scale
