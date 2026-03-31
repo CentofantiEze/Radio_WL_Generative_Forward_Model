@@ -218,3 +218,7 @@ __marimo__/
 *.pdf
 *.json
 *.png
+
+# Slurm logs
+*.out
+*.err
