@@ -1526,6 +1526,19 @@ def main():
         print(f"GMM saved with {len(gmm_params['weights'])} components")
         print(f"GMM saved with {len(gmm_params['weights'])} components", file=log_file)
 
+        # Save sample-level mean and std (avoids GMM approximation error)
+        g_mean = np.mean(samples_g_scaled, axis=0)
+        g_std = np.std(samples_g_scaled, axis=0)
+        g_cov = np.cov(samples_g_scaled.T)
+        np.savez(
+            os.path.join(out_dir, "radio_samples_stats.npz"),
+            g1_mean=g_mean[0],
+            g2_mean=g_mean[1],
+            g1_std=g_std[0],
+            g2_std=g_std[1],
+            cov=g_cov,
+        )
+
         if args.save_plots:
             fig, ax = plt.subplots(1, 1, figsize=(6, 6))
             plot_gmm_contours(
