@@ -74,9 +74,9 @@ def draw_spergel_profile(n, hlr, flux, e1, e2, g1, g2, uv_pos, Npx, pixel_scale)
 
     return complex_2_stack(vis)
 
-def draw_HST_profiles(Ngal, dataset_dir, flux_batch, g1, g2, uv_pos, Npx, pixel_scale_hst=0.03, profile_type="real", sample="23.5", seed=None):
+def draw_HST_profiles(Ngal, dataset_dir, flux_batch, g1, g2, uv_pos, Npx, pixel_scale_hst=0.03, profile_type="real", sample="25.2", seed=None):
 
-    catalog = gs.COSMOSCatalog(sample=sample, dir=dataset_dir, min_flux=20., min_hlr=0.2, max_hlr=1.)
+    catalog = gs.COSMOSCatalog(sample=sample, dir=dataset_dir)
     rng = np.random.default_rng(seed)
     indices = rng.choice(catalog.getNObjects(), Ngal, replace=False)
     im_gal = []
@@ -112,11 +112,11 @@ def draw_NN_profile(z, flux, g1, g2, key, uv_pos, Npx, pixel_scale_vae=0.03, jit
         _force_maxk=np.pi / pixel_scale_vae
     )
 
-    # Apply shear
-    y_gs = y_gs.shear(g1=g1, g2=g2)
-    
     # Set flux
     y_gs = y_gs.withFlux(flux)
+
+    # Apply shear
+    y_gs = y_gs.shear(g1=g1, g2=g2)
     
     # Draw kimage
     y_kimage = y_gs.drawKImage(nx=Npx, ny=Npx, scale=2*np.pi/pixel_scale_vae/Npx)
