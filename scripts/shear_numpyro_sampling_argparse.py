@@ -492,11 +492,15 @@ def main():
             assert args.flow_path is not None, "--flow_path required when --use_flow is set"
             assert args.flow_epoch is not None, "--flow_epoch required when --use_flow is set"
             flow = load_flow(Path(args.flow_path), epoch=args.flow_epoch)
+            # The flow's base_dist may have learned loc/scale parameters during
+            # training, so we must apply base_dist.bijection (Affine) before the
+            # main bijection to match what flow.sample() does internally.
+            base_bij = flow.flow.base_dist.bijection
             if flow.cond_dim > 0:
-                flow_forward = eqx.filter_jit(lambda u, c: flow.flow.bijection.transform(u, c))
+                flow_forward = eqx.filter_jit(lambda u, c: flow.flow.bijection.transform(base_bij.transform(u), c))
                 flow_condition = jnp.array(args.flow_condition)
             else:
-                flow_forward = eqx.filter_jit(lambda u: flow.flow.bijection.transform(u))
+                flow_forward = eqx.filter_jit(lambda u: flow.flow.bijection.transform(base_bij.transform(u)))
                 flow_condition = None
             print(f"Loaded flow from {args.flow_path} epoch {args.flow_epoch}")
             print(f"Flow condition: {flow_condition}")
