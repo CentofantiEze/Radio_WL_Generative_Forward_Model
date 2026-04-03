@@ -435,8 +435,11 @@ def model_fn_VAE_flow(
 
     # Transform u -> z via the flow bijection
     u_flat = u.reshape(Ngal, -1)  # (Ngal, latent_dim^2)
-    cond_rep = jnp.tile(flow_condition, (Ngal, 1))  # (Ngal, 3)
-    z_flat = jax.vmap(flow_forward)(u_flat, cond_rep)  # (Ngal, latent_dim^2)
+    if flow_condition is not None:
+        cond_rep = jnp.tile(flow_condition, (Ngal, 1))  # (Ngal, cond_dim)
+        z_flat = jax.vmap(flow_forward)(u_flat, cond_rep)
+    else:
+        z_flat = jax.vmap(flow_forward)(u_flat)
     z = z_flat.reshape(Ngal, latent_dim, latent_dim)
 
     # assuming constant shear across galaxies
