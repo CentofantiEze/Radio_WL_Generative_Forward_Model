@@ -39,6 +39,7 @@ from src.shearest.posterior_utils import fit_gmm, save_gmm, plot_gmm_contours
 
 from pshear.utils import load_galaxy_autoencoder # type: ignore
 from pshear.nn.flow import make_latent_flow # type: ignore
+from pshear.utils import load_flow # type: ignore
 import yaml
 
 
@@ -490,7 +491,7 @@ def main():
         if args.use_flow:
             assert args.flow_path is not None, "--flow_path required when --use_flow is set"
             assert args.flow_epoch is not None, "--flow_epoch required when --use_flow is set"
-            flow = load_flow_legacy(Path(args.flow_path), epoch=args.flow_epoch)
+            flow = load_flow(Path(args.flow_path), epoch=args.flow_epoch)
             flow_forward = eqx.filter_jit(lambda u, c: flow.flow.bijection.transform(u, c))
             flow_condition = jnp.array(args.flow_condition)
             print(f"Loaded flow from {args.flow_path} epoch {args.flow_epoch}")
