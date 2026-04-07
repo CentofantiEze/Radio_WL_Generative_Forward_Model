@@ -727,9 +727,10 @@ def main():
                 loss, grads = jax.value_and_grad(nll)(params)
                 updates, opt_state = optimizer_freeze.update(grads, opt_state, params)
                 params = optax.apply_updates(params, updates)
-                return (params, opt_state), loss
+                aux = (loss, params["g1"], params["g2"]) if has_shear else (loss,)
+                return (params, opt_state), aux
 
-            (init_params, _), losses_f = jax.lax.scan(
+            (init_params, _), scan_out_f = jax.lax.scan(
                 update_step_freeze, (init_params, opt_state_freeze), length=args.n_steps_map_freeze_shear
             )
 
@@ -752,20 +753,38 @@ def main():
             loss, grads = jax.value_and_grad(nll)(params)
             updates, opt_state = optimizer.update(grads, opt_state, params)
             params = optax.apply_updates(params, updates)
-            return (params, opt_state), loss
+            aux = (loss, params["g1"], params["g2"]) if has_shear else (loss,)
+            return (params, opt_state), aux
 
-        (params, _), losses = jax.lax.scan(
+        (params, _), scan_out = jax.lax.scan(
             update_step, (init_params, opt_state), length=args.n_steps_map
         )
 
         # Concatenate traces
-        if has_shear and args.n_steps_map_freeze_shear > 0:
-            losses = jnp.concatenate([losses_f, losses])
-
-        return params, losses
+        if has_shear:
+            if args.n_steps_map_freeze_shear > 0:
+                losses_f, g1_f, g2_f = scan_out_f
+                losses, g1_trace, g2_trace = scan_out
+                losses = jnp.concatenate([losses_f, losses])
+                g1_trace = jnp.concatenate([g1_f, g1_trace])
+                g2_trace = jnp.concatenate([g2_f, g2_trace])
+            else:
+                losses, g1_trace, g2_trace = scan_out
+            return params, losses, g1_trace, g2_trace
+        else:
+            if args.n_steps_map_freeze_shear > 0:
+                (losses_f,) = scan_out_f
+                (losses,) = scan_out
+                losses = jnp.concatenate([losses_f, losses])
+            else:
+                (losses,) = scan_out
+            return params, losses
 
     map_results = jax.vmap(find_map)(map_init_val)
-    init_val, map_losses = map_results
+    if has_shear:
+        init_val, map_losses, map_g1_trace, map_g2_trace = map_results
+    else:
+        init_val, map_losses = map_results
 
     g_rescale = args.g_prior_scale / args.g_prior_sigma
 
@@ -805,8 +824,26 @@ def main():
         axes[0].legend(fontsize=7)
 
         if has_shear:
-            map_g1_trace_phys = jnp.array([init_val["g1"]]) * g_rescale  # no per-step trace anymore
-            map_g2_trace_phys = jnp.array([init_val["g2"]]) * g_rescale
+            # g1 trace per chain: shape (n_chains, total_map_steps, 1) -> squeeze last dim
+            map_g1_phys = map_g1_trace.squeeze(-1) * g_rescale  # (n_chains, total_steps)
+            map_g2_phys = map_g2_trace.squeeze(-1) * g_rescale
+
+            for c in range(map_g1_phys.shape[0]):
+                axes[1].plot(steps, map_g1_phys[c], alpha=0.7, label=f"chain {c}")
+                axes[2].plot(steps, map_g2_phys[c], alpha=0.7, label=f"chain {c}")
+            axes[1].axhline(args.g1_true, color="r", ls="--", lw=1, label="true")
+            axes[2].axhline(args.g2_true, color="r", ls="--", lw=1, label="true")
+            if args.n_steps_map_freeze_shear > 0:
+                axes[1].axvline(args.n_steps_map_freeze_shear, color="k", ls=":", alpha=0.5)
+                axes[2].axvline(args.n_steps_map_freeze_shear, color="k", ls=":", alpha=0.5)
+            axes[1].set_xlabel("MAP step")
+            axes[1].set_ylabel("g1")
+            axes[1].set_title("g1 MAP trace")
+            axes[1].legend(fontsize=7)
+            axes[2].set_xlabel("MAP step")
+            axes[2].set_ylabel("g2")
+            axes[2].set_title("g2 MAP trace")
+            axes[2].legend(fontsize=7)
 
         fig.tight_layout()
         fig.savefig(os.path.join(out_dir, "map_convergence.png"), dpi=150)
