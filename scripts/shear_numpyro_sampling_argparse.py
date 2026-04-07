@@ -1081,6 +1081,15 @@ def main():
             print(f"Step size: {parameters.step_size}", file=log_file)
             print("L:", parameters.L)
             print(f"L: {parameters.L}", file=log_file)
+            inv_mass = parameters.inverse_mass_matrix
+            if hasattr(inv_mass, 'shape') and inv_mass.ndim > 0:
+                print(f"Inverse mass matrix: min={inv_mass.min():.6f}, max={inv_mass.max():.6f}, "
+                      f"median={jnp.median(inv_mass):.6f}, ratio={inv_mass.max()/inv_mass.min():.1f}")
+                print(f"Inverse mass matrix: min={inv_mass.min():.6f}, max={inv_mass.max():.6f}, "
+                      f"median={jnp.median(inv_mass):.6f}, ratio={inv_mass.max()/inv_mass.min():.1f}", file=log_file)
+            else:
+                print(f"Inverse mass matrix: scalar = {inv_mass}")
+                print(f"Inverse mass matrix: scalar = {inv_mass}", file=log_file)
 
         # Convert VAE to float16 for sampling (after adaptation in float32)
         if args.model_profile == "VAE" and args.vae_precision == "float16":
