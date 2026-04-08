@@ -317,6 +317,11 @@ def main():
              "Default None uses a scalar mass matrix (all params equal)."
     )
     parser.add_argument(
+        "--mclmc_inv_mass_file", type=str, default=None,
+        help="Path to .npy file with diagonal inverse mass matrix for MCLMC. "
+             "Overrides --mclmc_inv_mass_shear. Use with --mclmc_L and --step_size to skip adaptation."
+    )
+    parser.add_argument(
         "--num", type=int, default=20, help="Number of batch iterations"
     )
     parser.add_argument(
@@ -1023,7 +1028,13 @@ def main():
         # so we iterate sorted keys to match the flattened vector layout.
         # Setting a smaller value for g1/g2 gives them finer effective steps,
         # compensating for their much narrower posterior relative to latent dims.
-        if args.mclmc_inv_mass_shear is not None:
+        if args.mclmc_inv_mass_file is not None:
+            inverse_mass_matrix = jnp.array(np.load(args.mclmc_inv_mass_file))
+            print(f"MCLMC inverse mass matrix loaded from {args.mclmc_inv_mass_file}")
+            print(f"  shape={inverse_mass_matrix.shape}, min={inverse_mass_matrix.min():.6f}, "
+                  f"max={inverse_mass_matrix.max():.6f}, ratio={inverse_mass_matrix.max()/inverse_mass_matrix.min():.1f}")
+            print(f"MCLMC inverse mass matrix loaded from {args.mclmc_inv_mass_file}", file=log_file)
+        elif args.mclmc_inv_mass_shear is not None:
             inv_mass_parts = []
             for k in sorted(first_chain_init.keys()):
                 val = args.mclmc_inv_mass_shear if k in ("g1", "g2") else 1.0
