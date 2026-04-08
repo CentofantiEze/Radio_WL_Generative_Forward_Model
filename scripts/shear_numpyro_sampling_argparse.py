@@ -1087,6 +1087,16 @@ def main():
                       f"median={jnp.median(inv_mass):.6f}, ratio={inv_mass.max()/inv_mass.min():.1f}")
                 print(f"Inverse mass matrix: min={inv_mass.min():.6f}, max={inv_mass.max():.6f}, "
                       f"median={jnp.median(inv_mass):.6f}, ratio={inv_mass.max()/inv_mass.min():.1f}", file=log_file)
+                # Print per-parameter group and save full vector
+                offset = 0
+                for k in sorted(first_chain_init.keys()):
+                    size = first_chain_init[k].size
+                    chunk = inv_mass[offset:offset+size]
+                    print(f"  {k:>6s} [{size:4d}]: min={chunk.min():.6f}, max={chunk.max():.6f}, median={jnp.median(chunk):.6f}")
+                    print(f"  {k:>6s} [{size:4d}]: min={chunk.min():.6f}, max={chunk.max():.6f}, median={jnp.median(chunk):.6f}", file=log_file)
+                    offset += size
+                np.save(os.path.join(out_dir, "mclmc_inv_mass_matrix.npy"), np.array(inv_mass))
+                print(f"Saved inverse mass matrix to {out_dir}/mclmc_inv_mass_matrix.npy")
             else:
                 print(f"Inverse mass matrix: scalar = {inv_mass}")
                 print(f"Inverse mass matrix: scalar = {inv_mass}", file=log_file)
