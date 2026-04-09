@@ -1014,7 +1014,8 @@ def main():
         first_chain_init = jax.tree.map(lambda x: x[0], init_val)
         ndim = sum(v.size for v in jax.tree.leaves(first_chain_init))
         initial_L = jnp.sqrt(float(ndim))
-        initial_step_size = initial_L / ndim
+        # initial_step_size = initial_L / ndim
+        initial_step_size = args.lr_map  # Use MAP learning rate as heuristic for MCLMC step size
         print(f"MCLMC init: ndim={ndim}, initial_L={initial_L:.2f}, initial_step_size={initial_step_size:.4f}")
 
         def mclmc_factory(inverse_mass_matrix):
