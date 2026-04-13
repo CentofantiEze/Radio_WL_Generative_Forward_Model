@@ -129,6 +129,7 @@ def model_fn_composite(
     flux_sigma=None,
     flux_max=None,
     flux_min=None,
+    flux_ratio_max=4.0,
 ):
 
     u = jnp.ones((Ngal,))  # sampling galaxies all at once
@@ -147,7 +148,7 @@ def model_fn_composite(
 
     # flux ratio (disk/bulge), reparameterized with sigmoid to [0, 4]
     flux_ratio_z = numpyro.sample("flux_ratio", dist.Normal(0.0 * u, 1.0 * u))
-    flux_ratio = jax.nn.sigmoid(flux_ratio_z) * 4.0
+    flux_ratio = jax.nn.sigmoid(flux_ratio_z) * flux_ratio_max
 
     # ellipticity
     e1_disk = (

@@ -265,6 +265,9 @@ def main():
     parser.add_argument(
         "--flux_prior_max", type=float, default=0.25, help="Flux prior max"
     )
+    parser.add_argument(
+        "--composite_flux_ratio_max", type=float, default=4.0, help="Max disk/bulge flux ratio for composite model"
+    )
     parser.add_argument("--latent_dim", type=int, default=4, help="Latent dimension for VAE, z.shape -> (latent_dim, latent_dim).")
     parser.add_argument("--latent_mean", type=float, default=0., help="Latent representation mean value.")
     parser.add_argument("--vae_path", type=str, default=None, help="Path to the trained VAE model.")
@@ -623,6 +626,7 @@ def main():
             flux_sigma=args.flux_prior_sigma,
             flux_max=args.flux_prior_max,
             flux_min=args.flux_prior_min,
+            flux_ratio_max=args.composite_flux_ratio_max,
         )
     else:
         model = partial(
@@ -1554,7 +1558,7 @@ def main():
                         "k", alpha=0.3)
                 elif label == "flux_ratio":
                     ax.plot(
-                        jax.nn.sigmoid(samples_["flux_ratio"][k, :, 0]) * 4.0,
+                        jax.nn.sigmoid(samples_["flux_ratio"][k, :, 0]) * args.composite_flux_ratio_max,
                         "k", alpha=0.3)
                 elif label in ["e1", "e2"] and "e1" in samples_ and "e2" in samples_:
                     e = jnp.stack([
