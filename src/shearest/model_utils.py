@@ -9,7 +9,7 @@ import numpyro.distributions as dist
 from jax import checkpoint
 import equinox as eqx
 
-from .data_gen_utils import draw_exp_profile, draw_spergel_profile, draw_NN_profile
+from .data_gen_utils import draw_exp_profile, draw_spergel_profile, draw_NN_profile, draw_composite_profile
 from .func_utils import to_unit_disk
 from pshear.nn.utils import split # type: ignore
 
@@ -109,6 +109,102 @@ def model_fn(
         )
     else:
         raise ValueError("Profile type not recognized.")
+   
+    return numpyro.sample("obs", dist.Normal(im_gal, noise_uv), obs=obs)
+
+def model_fn_composite(
+    Ngal=None,
+    Npx=None,
+    pixel_scale=None,
+    uv_pos=None,
+    noise_uv=None,
+    obs=None,
+    ell_sigma=None,
+    ell_scale=None,
+    g_sigma=None,
+    g_scale=None,
+    hlr_sigma=None,
+    hlr_max=None,
+    hlr_min=None,
+    flux_sigma=None,
+    flux_max=None,
+    flux_min=None,
+):
+
+    u = jnp.ones((Ngal,))  # sampling galaxies all at once
+
+    # hlr_disk
+    hlr_disk_z = numpyro.sample("hlr_disk", dist.Normal(0.0 * u, hlr_sigma * u))
+    hlr_disk = hlr_min + jax.nn.sigmoid(hlr_disk_z / hlr_sigma) * (hlr_max - hlr_min)
+
+    # hlr_bulge
+    hlr_bulge_z = numpyro.sample("hlr_bulge", dist.Normal(0.0 * u, hlr_sigma * u))
+    hlr_bulge = hlr_min + jax.nn.sigmoid(hlr_bulge_z / hlr_sigma) * (hlr_max - hlr_min)
+
+    # flux
+    flux_z = numpyro.sample("flux", dist.Normal(0.0 * u, flux_sigma * u))
+    flux = flux_min + jax.nn.sigmoid(flux_z / flux_sigma) * (flux_max - flux_min)
+
+    # flux ratio (disk/bulge)
+    flux_ratio = numpyro.sample("flux_ratio", dist.Uniform(0.0 * u, 4.0 * u))
+
+    # ellipticity
+    e1_disk = (
+        numpyro.sample("e1_disk", dist.Normal(0.0 * u, ell_sigma * u))
+        / ell_sigma
+        * ell_scale
+    )
+    e2_disk = (
+        numpyro.sample("e2_disk", dist.Normal(0.0 * u, ell_sigma * u))
+        / ell_sigma
+        * ell_scale
+    )
+    e1_bulge = (
+        numpyro.sample("e1_bulge", dist.Normal(0.0 * u, ell_sigma * u))
+        / ell_sigma
+        * ell_scale
+    )
+    e2_bulge = (
+        numpyro.sample("e2_bulge", dist.Normal(0.0 * u, ell_sigma * u))
+        / ell_sigma
+        * ell_scale
+    )
+
+    # assuming constant shear across galaxies
+    g1 = (
+        numpyro.sample("g1", dist.Normal(jnp.zeros((1,)), g_sigma * jnp.ones((1,))))
+        * g_scale
+        / g_sigma
+    )
+    g2 = (
+        numpyro.sample("g2", dist.Normal(jnp.zeros((1,)), g_sigma * jnp.ones((1,))))
+        * g_scale
+        / g_sigma
+    )
+
+    # clipping undefined e and g values
+    e_bulge = jnp.stack([e1_bulge, e2_bulge], 0)
+    e_disk = jnp.stack([e1_disk, e2_disk], 0)
+    e_bulge = to_unit_disk(e_bulge)
+    e_disk = to_unit_disk(e_disk)
+
+    g = jnp.repeat(jnp.stack([g1, g2], 0), Ngal, -1)
+    g = to_unit_disk(g)
+    
+    
+    draw = partial(draw_composite_profile, uv_pos=uv_pos, Npx=Npx, pixel_scale=pixel_scale)
+    im_gal = jax.vmap(draw)(
+        hlr_disk=hlr_disk,
+        hlr_bulge=hlr_bulge,
+        flux=flux,
+        flux_db_ratio=flux_ratio,
+        e_bulge_1=e_bulge[0],
+        e_bulge_2=e_bulge[1],
+        e_disk_1=e_disk[0],
+        e_disk_2=e_disk[1],
+        g1=g[0],
+        g2=g[1],
+    )
    
     return numpyro.sample("obs", dist.Normal(im_gal, noise_uv), obs=obs)
 

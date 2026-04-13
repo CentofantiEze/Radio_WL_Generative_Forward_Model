@@ -74,6 +74,37 @@ def draw_spergel_profile(n, hlr, flux, e1, e2, g1, g2, uv_pos, Npx, pixel_scale)
 
     return complex_2_stack(vis)
 
+def draw_composite_profile(hlr_disk, hlr_bulge, flux, flux_db_ratio, e_bulge_1, e_bulge_2, e_disk_1, e_disk_2, g1, g2, uv_pos, Npx, pixel_scale):
+    # Draw bulge component with flux set to 1.0 (we will normalize the total flux later)
+    gal_bulge = galsim.Spergel(nu=-0.6, half_light_radius=hlr_bulge, flux=1.0)
+
+    # Draw disk component with flux set to the desired bulge-to-disk ratio (we will normalize the total flux later)
+    gal_disk = galsim.Spergel(nu=0.5, half_light_radius=hlr_disk, flux=flux_db_ratio)
+
+    # Apply intrinsic ellipticities
+    gal_disk = gal_disk.shear(e1=e_disk_1, e2=e_disk_2)
+    gal_bulge = gal_bulge.shear(e1=e_bulge_1, e2=e_bulge_2)
+
+    # Combine components
+    gal = gal_disk + gal_bulge
+
+    # Set total flux
+    gal = gal.withFlux(flux)
+
+    # Apply cosmic shear
+    gal = gal.shear(g1=g1, g2=g2)
+
+    # Convert to Fourier space
+    gal_kimage = gal.drawKImage(nx=Npx, ny=Npx, scale=2 * np.pi / (Npx * pixel_scale))
+
+    # Get array
+    gal_kimage = gal_kimage.array
+
+    # Sample the visibilities
+    vis = gal_kimage[uv_pos]
+
+    return complex_2_stack(vis)
+
 def draw_HST_profiles(Ngal, dataset_dir, flux_batch, g1, g2, uv_pos, Npx, pixel_scale_hst=0.03, profile_type="real", sample="25.2", seed=None):
 
     catalog = gs.COSMOSCatalog(sample=sample, dir=dataset_dir)

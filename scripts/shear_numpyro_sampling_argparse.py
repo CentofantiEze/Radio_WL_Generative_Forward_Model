@@ -33,7 +33,7 @@ import corner
 
 from src.shearest.data_gen_utils import gen_gal_dataset
 from src.shearest.func_utils import stack_2_complex, to_unit_disk
-from src.shearest.model_utils import model_fn, model_fn_VAE, model_fn_VAE_noshear, model_fn_VAE_flow, model_fn_VAE_flow_noshear
+from src.shearest.model_utils import model_fn, model_fn_VAE, model_fn_VAE_noshear, model_fn_VAE_flow, model_fn_VAE_flow_noshear, model_fn_composite
 from src.shearest.psf_utils import compute_radio_uv_mask
 from src.shearest.posterior_utils import fit_gmm, save_gmm, plot_gmm_contours
 
@@ -604,6 +604,26 @@ def main():
                 batch_size=args.vae_inference_batch_size,
                 use_dropout=args.use_dropout,
             )
+    elif args.model_profile == "composite":
+        model = partial(
+            model_fn_composite,
+            Ngal=args.Ngal,
+            Npx=args.Npx,
+            pixel_scale=args.pixel_scale,
+            uv_pos=uv_pos,
+            noise_uv=args.noise_uv,
+            obs=data,
+            ell_sigma=args.ell_prior_sigma,
+            ell_scale=args.ell_prior_scale,
+            g_sigma=args.g_prior_sigma,
+            g_scale=args.g_prior_scale,
+            hlr_sigma=args.hlr_prior_sigma,
+            hlr_max=args.hlr_prior_max,
+            hlr_min=args.hlr_prior_min,
+            flux_sigma=args.flux_prior_sigma,
+            flux_max=args.flux_prior_max,
+            flux_min=args.flux_prior_min,
+        )
     else:
         model = partial(
             model_fn,
@@ -1520,9 +1540,9 @@ def main():
         for i, label in enumerate(labels):
             ax = axes[i]
             for k in range(args.num_chains):
-                if label == "hlr" and "hlr" in samples_:
+                if label in ("hlr", "hlr_disk", "hlr_bulge") and label in samples_:
                     ax.plot(
-                        jax.nn.sigmoid(samples_["hlr"][k, :, 0] / args.hlr_prior_sigma)
+                        jax.nn.sigmoid(samples_[label][k, :, 0] / args.hlr_prior_sigma)
                         * (args.hlr_prior_max - args.hlr_prior_min)
                         + args.hlr_prior_min,
                         "k", alpha=0.3)
@@ -1539,6 +1559,20 @@ def main():
                     ], 0)
                     e = to_unit_disk(e)
                     ax.plot(e[0] if label == "e1" else e[1], "k", alpha=0.3)
+                elif label in ["e1_disk", "e2_disk"] and "e1_disk" in samples_:
+                    e = jnp.stack([
+                        samples_["e1_disk"][k, :, 0] / args.ell_prior_sigma * args.ell_prior_scale,
+                        samples_["e2_disk"][k, :, 0] / args.ell_prior_sigma * args.ell_prior_scale,
+                    ], 0)
+                    e = to_unit_disk(e)
+                    ax.plot(e[0] if label == "e1_disk" else e[1], "k", alpha=0.3)
+                elif label in ["e1_bulge", "e2_bulge"] and "e1_bulge" in samples_:
+                    e = jnp.stack([
+                        samples_["e1_bulge"][k, :, 0] / args.ell_prior_sigma * args.ell_prior_scale,
+                        samples_["e2_bulge"][k, :, 0] / args.ell_prior_sigma * args.ell_prior_scale,
+                    ], 0)
+                    e = to_unit_disk(e)
+                    ax.plot(e[0] if label == "e1_bulge" else e[1], "k", alpha=0.3)
                 elif label in ["g1", "g2"] and "g1" in samples_ and "g2" in samples_:
                     g = jnp.stack([
                         samples_["g1"][k, :, 0] / args.g_prior_sigma * args.g_prior_scale,
