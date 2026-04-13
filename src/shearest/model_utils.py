@@ -145,8 +145,9 @@ def model_fn_composite(
     flux_z = numpyro.sample("flux", dist.Normal(0.0 * u, flux_sigma * u))
     flux = flux_min + jax.nn.sigmoid(flux_z / flux_sigma) * (flux_max - flux_min)
 
-    # flux ratio (disk/bulge)
-    flux_ratio = numpyro.sample("flux_ratio", dist.Uniform(0.0 * u, 4.0 * u))
+    # flux ratio (disk/bulge), reparameterized with sigmoid to [0, 4]
+    flux_ratio_z = numpyro.sample("flux_ratio", dist.Normal(0.0 * u, 1.0 * u))
+    flux_ratio = jax.nn.sigmoid(flux_ratio_z) * 4.0
 
     # ellipticity
     e1_disk = (

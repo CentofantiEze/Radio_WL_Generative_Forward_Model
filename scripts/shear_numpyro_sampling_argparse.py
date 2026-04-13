@@ -1552,6 +1552,10 @@ def main():
                         * (args.flux_prior_max - args.flux_prior_min)
                         + args.flux_prior_min,
                         "k", alpha=0.3)
+                elif label == "flux_ratio":
+                    ax.plot(
+                        jax.nn.sigmoid(samples_["flux_ratio"][k, :, 0]) * 4.0,
+                        "k", alpha=0.3)
                 elif label in ["e1", "e2"] and "e1" in samples_ and "e2" in samples_:
                     e = jnp.stack([
                         samples_["e1"][k, :, 0] / args.ell_prior_sigma * args.ell_prior_scale,
