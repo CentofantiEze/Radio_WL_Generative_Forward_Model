@@ -270,6 +270,7 @@ def main():
     )
     parser.add_argument("--latent_dim", type=int, default=4, help="Latent dimension for VAE, z.shape -> (latent_dim, latent_dim).")
     parser.add_argument("--latent_mean", type=float, default=0., help="Latent representation mean value.")
+    parser.add_argument("--latent_sigma", type=float, default=1.0, help="Latent space sampling sigma (rescaled back to physical scale).")
     parser.add_argument("--vae_path", type=str, default=None, help="Path to the trained VAE model.")
     parser.add_argument("--vae_epoch", type=int, default=None, help="Epoch of the trained VAE model.")
     parser.add_argument("--vae_model_inference_mode", type=str, default="parallel", help="VAE model inference mode: parallel, sequential or batch.")
@@ -532,6 +533,7 @@ def main():
                 flux_max=args.flux_prior_max,
                 flux_min=args.flux_prior_min,
                 latent_dim=args.latent_dim,
+                latent_sigma=args.latent_sigma,
                 jitted_decode=jitted_decode,
                 gsparams=gsparams,
                 run_type=args.vae_model_inference_mode,
@@ -556,6 +558,7 @@ def main():
                 flux_min=args.flux_prior_min,
                 latent_dim=args.latent_dim,
                 latent_mean=args.latent_mean,
+                latent_sigma=args.latent_sigma,
                 jitted_decode=jitted_decode,
                 gsparams=gsparams,
                 run_type=args.vae_model_inference_mode,
@@ -577,6 +580,7 @@ def main():
                 flux_max=args.flux_prior_max,
                 flux_min=args.flux_prior_min,
                 latent_dim=args.latent_dim,
+                latent_sigma=args.latent_sigma,
                 jitted_decode=jitted_decode,
                 gsparams=gsparams,
                 run_type=args.vae_model_inference_mode,
@@ -601,6 +605,7 @@ def main():
                 flux_min=args.flux_prior_min,
                 latent_dim=args.latent_dim,
                 latent_mean=args.latent_mean,
+                latent_sigma=args.latent_sigma,
                 jitted_decode=jitted_decode,
                 gsparams=gsparams,
                 run_type=args.vae_model_inference_mode,
@@ -970,7 +975,7 @@ def main():
                     pixel_scale_vae=args.pixel_scale_vae,
                     uv_pos=uv_pos, noise_uv=args.noise_uv, obs=data,
                     flux_sigma=args.flux_prior_sigma, flux_max=args.flux_prior_max, flux_min=args.flux_prior_min,
-                    latent_dim=args.latent_dim,
+                    latent_dim=args.latent_dim, latent_sigma=args.latent_sigma,
                     jitted_decode=jitted_decode, gsparams=gsparams,
                     run_type=args.vae_model_inference_mode, batch_size=args.vae_inference_batch_size,
                     use_dropout=args.use_dropout,
@@ -983,7 +988,7 @@ def main():
                     pixel_scale_vae=args.pixel_scale_vae,
                     uv_pos=uv_pos, noise_uv=args.noise_uv, obs=data,
                     flux_sigma=args.flux_prior_sigma, flux_max=args.flux_prior_max, flux_min=args.flux_prior_min,
-                    latent_dim=args.latent_dim, latent_mean=args.latent_mean,
+                    latent_dim=args.latent_dim, latent_mean=args.latent_mean, latent_sigma=args.latent_sigma,
                     jitted_decode=jitted_decode, gsparams=gsparams,
                     run_type=args.vae_model_inference_mode, batch_size=args.vae_inference_batch_size,
                     use_dropout=args.use_dropout,
@@ -996,7 +1001,7 @@ def main():
                     uv_pos=uv_pos, noise_uv=args.noise_uv, obs=data,
                     g_sigma=args.g_prior_sigma, g_scale=args.g_prior_scale,
                     flux_sigma=args.flux_prior_sigma, flux_max=args.flux_prior_max, flux_min=args.flux_prior_min,
-                    latent_dim=args.latent_dim,
+                    latent_dim=args.latent_dim, latent_sigma=args.latent_sigma,
                     jitted_decode=jitted_decode, gsparams=gsparams,
                     run_type=args.vae_model_inference_mode, batch_size=args.vae_inference_batch_size,
                     use_dropout=args.use_dropout,
@@ -1010,7 +1015,7 @@ def main():
                     uv_pos=uv_pos, noise_uv=args.noise_uv, obs=data,
                     g_sigma=args.g_prior_sigma, g_scale=args.g_prior_scale,
                     flux_sigma=args.flux_prior_sigma, flux_max=args.flux_prior_max, flux_min=args.flux_prior_min,
-                    latent_dim=args.latent_dim, latent_mean=args.latent_mean,
+                    latent_dim=args.latent_dim, latent_mean=args.latent_mean, latent_sigma=args.latent_sigma,
                     jitted_decode=jitted_decode, gsparams=gsparams,
                     run_type=args.vae_model_inference_mode, batch_size=args.vae_inference_batch_size,
                     use_dropout=args.use_dropout,
@@ -1152,7 +1157,7 @@ def main():
                     pixel_scale_vae=args.pixel_scale_vae,
                     uv_pos=uv_pos, noise_uv=args.noise_uv, obs=data,
                     flux_sigma=args.flux_prior_sigma, flux_max=args.flux_prior_max, flux_min=args.flux_prior_min,
-                    latent_dim=args.latent_dim,
+                    latent_dim=args.latent_dim, latent_sigma=args.latent_sigma,
                     jitted_decode=jitted_decode, gsparams=gsparams,
                     run_type=args.vae_model_inference_mode, batch_size=args.vae_inference_batch_size,
                     use_dropout=args.use_dropout,
@@ -1165,7 +1170,7 @@ def main():
                     pixel_scale_vae=args.pixel_scale_vae,
                     uv_pos=uv_pos, noise_uv=args.noise_uv, obs=data,
                     flux_sigma=args.flux_prior_sigma, flux_max=args.flux_prior_max, flux_min=args.flux_prior_min,
-                    latent_dim=args.latent_dim, latent_mean=args.latent_mean,
+                    latent_dim=args.latent_dim, latent_mean=args.latent_mean, latent_sigma=args.latent_sigma,
                     jitted_decode=jitted_decode, gsparams=gsparams,
                     run_type=args.vae_model_inference_mode, batch_size=args.vae_inference_batch_size,
                     use_dropout=args.use_dropout,
@@ -1178,7 +1183,7 @@ def main():
                     uv_pos=uv_pos, noise_uv=args.noise_uv, obs=data,
                     g_sigma=args.g_prior_sigma, g_scale=args.g_prior_scale,
                     flux_sigma=args.flux_prior_sigma, flux_max=args.flux_prior_max, flux_min=args.flux_prior_min,
-                    latent_dim=args.latent_dim,
+                    latent_dim=args.latent_dim, latent_sigma=args.latent_sigma,
                     jitted_decode=jitted_decode, gsparams=gsparams,
                     run_type=args.vae_model_inference_mode, batch_size=args.vae_inference_batch_size,
                     use_dropout=args.use_dropout,
@@ -1192,7 +1197,7 @@ def main():
                     uv_pos=uv_pos, noise_uv=args.noise_uv, obs=data,
                     g_sigma=args.g_prior_sigma, g_scale=args.g_prior_scale,
                     flux_sigma=args.flux_prior_sigma, flux_max=args.flux_prior_max, flux_min=args.flux_prior_min,
-                    latent_dim=args.latent_dim, latent_mean=args.latent_mean,
+                    latent_dim=args.latent_dim, latent_mean=args.latent_mean, latent_sigma=args.latent_sigma,
                     jitted_decode=jitted_decode, gsparams=gsparams,
                     run_type=args.vae_model_inference_mode, batch_size=args.vae_inference_batch_size,
                     use_dropout=args.use_dropout,
@@ -1518,8 +1523,11 @@ def main():
         }
 
     # Build labels list from available sample keys (generic over model)
-    # Plot scalar/low-dim params; skip high-dim latents (z, u)
+    # Plot scalar/low-dim params; skip high-dim latents (z, u) but add first component
     labels = [k for k in sorted(samples_.keys()) if k not in ("z", "u")]
+    latent_key = "z" if "z" in samples_ else ("u" if "u" in samples_ else None)
+    if latent_key is not None:
+        labels.append(f"{latent_key}[0]")
 
     if args.save_plots:
         fig, axes = plt.subplots(max(len(labels), 1), figsize=(10, 2.5 * max(len(labels), 1)), sharex=True)
@@ -1528,8 +1536,12 @@ def main():
         for i, label in enumerate(labels):
             ax = axes[i]
             for k in range(args.num_chains):
-                ax.plot(samples_[label][k, :, 0], "k", alpha=0.3)
-            ax.set_xlim(0, samples_[label].shape[1])
+                if latent_key is not None and label == f"{latent_key}[0]":
+                    ax.plot(samples_[latent_key][k, :, 0, 0, 0], "k", alpha=0.3)
+                else:
+                    ax.plot(samples_[label][k, :, 0], "k", alpha=0.3)
+            ref_key = latent_key if (latent_key is not None and label == f"{latent_key}[0]") else label
+            ax.set_xlim(0, samples_[ref_key].shape[1])
             ax.set_ylabel(label)
             ax.yaxis.set_label_coords(-0.1, 0.5)
         axes[-1].set_xlabel("step number")
@@ -1588,9 +1600,12 @@ def main():
                     ], 0)
                     g = to_unit_disk(g)
                     ax.plot(g[0] if label == "g1" else g[1], "k", alpha=0.3)
+                elif latent_key is not None and label == f"{latent_key}[0]":
+                    ax.plot(samples_[latent_key][k, :, 0, 0, 0] / args.latent_sigma, "k", alpha=0.3)
                 else:
                     ax.plot(samples_[label][k, :, 0], "k", alpha=0.3)
-            ax.set_xlim(0, samples_[label].shape[1])
+            ref_key = latent_key if (latent_key is not None and label == f"{latent_key}[0]") else label
+            ax.set_xlim(0, samples_[ref_key].shape[1])
             ax.set_ylabel(label)
             ax.yaxis.set_label_coords(-0.1, 0.5)
         axes[-1].set_xlabel("step number")

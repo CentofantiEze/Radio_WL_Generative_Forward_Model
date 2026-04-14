@@ -224,13 +224,14 @@ def model_fn_VAE(
     flux_min=None,
     latent_dim=None,
     latent_mean=None,
+    latent_sigma=1.0,
     jitted_decode=None,
     gsparams=None,
     run_type="sequential",
     batch_size=1,
     use_dropout=False,
 ):
-    z = numpyro.sample("z", dist.Normal(jnp.zeros((Ngal ,latent_dim, latent_dim)), jnp.ones((Ngal ,latent_dim, latent_dim)))) + latent_mean
+    z = numpyro.sample("z", dist.Normal(jnp.zeros((Ngal ,latent_dim, latent_dim)), latent_sigma * jnp.ones((Ngal ,latent_dim, latent_dim)))) / latent_sigma + latent_mean
 
     # assuming constant shear across galaxies
     g1 = (
@@ -334,13 +335,14 @@ def model_fn_VAE_noshear(
     flux_min=None,
     latent_dim=None,
     latent_mean=None,
+    latent_sigma=1.0,
     jitted_decode=None,
     gsparams=None,
     run_type="sequential",
     batch_size=1,
     use_dropout=False,
 ):
-    z = numpyro.sample("z", dist.Normal(jnp.zeros((Ngal, latent_dim, latent_dim)), jnp.ones((Ngal, latent_dim, latent_dim)))) + latent_mean
+    z = numpyro.sample("z", dist.Normal(jnp.zeros((Ngal, latent_dim, latent_dim)), latent_sigma * jnp.ones((Ngal, latent_dim, latent_dim)))) / latent_sigma + latent_mean
 
     # No shear — g1=g2=0
     g = jnp.zeros((2, Ngal))
@@ -422,6 +424,7 @@ def model_fn_VAE_flow_noshear(
     flux_max=None,
     flux_min=None,
     latent_dim=None,
+    latent_sigma=1.0,
     jitted_decode=None,
     gsparams=None,
     run_type="sequential",
@@ -431,7 +434,7 @@ def model_fn_VAE_flow_noshear(
     flow_condition=None,
 ):
     # Sample u in the flow base space (standard normal)
-    u = numpyro.sample("u", dist.Normal(jnp.zeros((Ngal, latent_dim, latent_dim)), jnp.ones((Ngal, latent_dim, latent_dim))))
+    u = numpyro.sample("u", dist.Normal(jnp.zeros((Ngal, latent_dim, latent_dim)), latent_sigma * jnp.ones((Ngal, latent_dim, latent_dim)))) / latent_sigma
 
     # Transform u -> z via the flow bijection
     u_flat = u.reshape(Ngal, -1)
@@ -520,6 +523,7 @@ def model_fn_VAE_flow(
     flux_max=None,
     flux_min=None,
     latent_dim=None,
+    latent_sigma=1.0,
     jitted_decode=None,
     gsparams=None,
     run_type="sequential",
@@ -529,7 +533,7 @@ def model_fn_VAE_flow(
     flow_condition=None,
 ):
     # Sample u in the flow base space (standard normal)
-    u = numpyro.sample("u", dist.Normal(jnp.zeros((Ngal, latent_dim, latent_dim)), jnp.ones((Ngal, latent_dim, latent_dim))))
+    u = numpyro.sample("u", dist.Normal(jnp.zeros((Ngal, latent_dim, latent_dim)), latent_sigma * jnp.ones((Ngal, latent_dim, latent_dim)))) / latent_sigma
 
     # Transform u -> z via the flow bijection
     u_flat = u.reshape(Ngal, -1)  # (Ngal, latent_dim^2)
