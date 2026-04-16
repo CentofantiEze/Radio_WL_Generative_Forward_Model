@@ -341,6 +341,9 @@ def main():
         "--save_data", action="store_true", default=False, help="Save intermediate data (radio_data.npy, radio_psf_mask.npy, radio_init_val.npy, radio_map_val.npy)"
     )
     parser.add_argument(
+        "--precomputed_map", action="store_true", default=False, help="Load MAP values from output dir instead of re-running MAP"
+    )
+    parser.add_argument(
         "--seed",
         type=int,
         default=None,
@@ -740,150 +743,167 @@ def main():
 
     # find the MAP for chain initialization
     has_shear = "g1" in map_init_val
+    g_rescale = args.g_prior_scale / args.g_prior_sigma
 
-    def find_map(init_params):
-        param_labels = {k: 'shear' if k in ('g1', 'g2') else 'default' for k in init_params}
-        opt_fn = optax.adam if args.map_optimizer == "adam" else optax.adafactor
+    # Try to load precomputed MAP values
+    map_file = os.path.join(out_dir, "radio_map_val.npy")
+    if args.precomputed_map and os.path.exists(map_file):
+        print(f"Loading precomputed MAP from {map_file}")
+        print(f"Loading precomputed MAP from {map_file}", file=log_file)
+        init_val = np.load(map_file, allow_pickle=True)[()]
+        # Convert to jax arrays
+        init_val = {k: jnp.array(v) for k, v in init_val.items()}
+        if has_shear:
+            print(f"Loaded MAP: g1={init_val['g1']*g_rescale}, g2={init_val['g2']*g_rescale}")
+            print(f"Loaded MAP: g1={init_val['g1']*g_rescale}, g2={init_val['g2']*g_rescale}", file=log_file)
+    elif args.precomputed_map:
+        print(f"WARNING: --precomputed_map set but {map_file} not found, running MAP")
+        print(f"WARNING: --precomputed_map set but {map_file} not found, running MAP", file=log_file)
+        args.precomputed_map = False
 
-        # Phase 0: optimize only u/flux with g1,g2 frozen
-        if has_shear and args.n_steps_map_freeze_shear > 0:
-            optimizer_freeze = optax.multi_transform(
-                transforms={
-                    'shear': optax.set_to_zero(),
-                    'default': opt_fn(args.lr_map),
-                },
-                param_labels=param_labels,
-            )
-            opt_state_freeze = optimizer_freeze.init(init_params)
+    if not args.precomputed_map:
 
-            def update_step_freeze(carry, xs):
+        def find_map(init_params):
+            param_labels = {k: 'shear' if k in ('g1', 'g2') else 'default' for k in init_params}
+            opt_fn = optax.adam if args.map_optimizer == "adam" else optax.adafactor
+
+            # Phase 0: optimize only u/flux with g1,g2 frozen
+            if has_shear and args.n_steps_map_freeze_shear > 0:
+                optimizer_freeze = optax.multi_transform(
+                    transforms={
+                        'shear': optax.set_to_zero(),
+                        'default': opt_fn(args.lr_map),
+                    },
+                    param_labels=param_labels,
+                )
+                opt_state_freeze = optimizer_freeze.init(init_params)
+
+                def update_step_freeze(carry, xs):
+                    params, opt_state = carry
+                    loss, grads = jax.value_and_grad(nll)(params)
+                    updates, opt_state = optimizer_freeze.update(grads, opt_state, params)
+                    params = optax.apply_updates(params, updates)
+                    aux = (loss, params["g1"], params["g2"]) if has_shear else (loss,)
+                    return (params, opt_state), aux
+
+                (init_params, _), scan_out_f = jax.lax.scan(
+                    update_step_freeze, (init_params, opt_state_freeze), length=args.n_steps_map_freeze_shear
+                )
+
+            # Phase 1: joint optimization of all parameters
+            if has_shear:
+                optimizer = optax.multi_transform(
+                    transforms={
+                        'shear': opt_fn(args.lr_map * args.lr_map_shear_factor),
+                        'default': opt_fn(args.lr_map),
+                    },
+                    param_labels=param_labels,
+                )
+            else:
+                optimizer = opt_fn(args.lr_map)
+
+            opt_state = optimizer.init(init_params)
+
+            def update_step(carry, xs):
                 params, opt_state = carry
                 loss, grads = jax.value_and_grad(nll)(params)
-                updates, opt_state = optimizer_freeze.update(grads, opt_state, params)
+                updates, opt_state = optimizer.update(grads, opt_state, params)
                 params = optax.apply_updates(params, updates)
                 aux = (loss, params["g1"], params["g2"]) if has_shear else (loss,)
                 return (params, opt_state), aux
 
-            (init_params, _), scan_out_f = jax.lax.scan(
-                update_step_freeze, (init_params, opt_state_freeze), length=args.n_steps_map_freeze_shear
+            (params, _), scan_out = jax.lax.scan(
+                update_step, (init_params, opt_state), length=args.n_steps_map
             )
 
-        # Phase 1: joint optimization of all parameters
+            # Concatenate traces
+            if has_shear:
+                if args.n_steps_map_freeze_shear > 0:
+                    losses_f, g1_f, g2_f = scan_out_f
+                    losses, g1_trace, g2_trace = scan_out
+                    losses = jnp.concatenate([losses_f, losses])
+                    g1_trace = jnp.concatenate([g1_f, g1_trace])
+                    g2_trace = jnp.concatenate([g2_f, g2_trace])
+                else:
+                    losses, g1_trace, g2_trace = scan_out
+                return params, losses, g1_trace, g2_trace
+            else:
+                if args.n_steps_map_freeze_shear > 0:
+                    (losses_f,) = scan_out_f
+                    (losses,) = scan_out
+                    losses = jnp.concatenate([losses_f, losses])
+                else:
+                    (losses,) = scan_out
+                return params, losses
+
+        map_results = jax.vmap(find_map)(map_init_val)
         if has_shear:
-            optimizer = optax.multi_transform(
-                transforms={
-                    'shear': opt_fn(args.lr_map * args.lr_map_shear_factor),
-                    'default': opt_fn(args.lr_map),
-                },
-                param_labels=param_labels,
+            init_val, map_losses, map_g1_trace, map_g2_trace = map_results
+        else:
+            init_val, map_losses = map_results
+
+        # Print MAP diagnostics
+        if has_shear:
+            print(
+                init_val["g1"] * g_rescale,
+                init_val["g2"] * g_rescale,
             )
-        else:
-            optimizer = opt_fn(args.lr_map)
+            print(
+                f"Initial guess: g1={init_val['g1']*g_rescale}, g2={init_val['g2']*g_rescale}",
+                file=log_file,
+            )
+        print(f"MAP final loss (per chain): {map_losses[:, -1]}", file=log_file)
 
-        opt_state = optimizer.init(init_params)
+        if args.save_plots:
+            # Plot MAP convergence: loss and g1,g2 evolution
+            n_map_plots = 3 if has_shear else 1
+            fig, axes = plt.subplots(1, n_map_plots, figsize=(5 * n_map_plots, 4))
+            if n_map_plots == 1:
+                axes = [axes]
+            total_map_steps = (args.n_steps_map_freeze_shear if has_shear else 0) + args.n_steps_map
+            steps = jnp.arange(total_map_steps)
 
-        def update_step(carry, xs):
-            params, opt_state = carry
-            loss, grads = jax.value_and_grad(nll)(params)
-            updates, opt_state = optimizer.update(grads, opt_state, params)
-            params = optax.apply_updates(params, updates)
-            aux = (loss, params["g1"], params["g2"]) if has_shear else (loss,)
-            return (params, opt_state), aux
+            # Loss (log scale, shift to ensure positive values)
+            loss_min = jnp.min(map_losses)
+            loss_offset = jnp.where(loss_min < 0, jnp.abs(loss_min) + 1.0, 0.0)
+            for c in range(map_losses.shape[0]):
+                axes[0].plot(steps, map_losses[c] + loss_offset, alpha=0.7, label=f"chain {c}")
+            axes[0].set_yscale("log")
+            if has_shear and args.n_steps_map_freeze_shear > 0:
+                axes[0].axvline(args.n_steps_map_freeze_shear, color="k", ls=":", alpha=0.5, label="unfreeze g")
+            axes[0].set_xlabel("MAP step")
+            ylabel = "Loss (NLL)" if loss_offset == 0 else f"Loss (NLL + {loss_offset:.1f})"
+            axes[0].set_ylabel(ylabel)
+            axes[0].set_title("MAP loss")
+            axes[0].legend(fontsize=7)
 
-        (params, _), scan_out = jax.lax.scan(
-            update_step, (init_params, opt_state), length=args.n_steps_map
-        )
+            if has_shear:
+                # g1 trace per chain: shape (n_chains, total_map_steps, 1) -> squeeze last dim
+                map_g1_phys = map_g1_trace.squeeze(-1) * g_rescale  # (n_chains, total_steps)
+                map_g2_phys = map_g2_trace.squeeze(-1) * g_rescale
 
-        # Concatenate traces
-        if has_shear:
-            if args.n_steps_map_freeze_shear > 0:
-                losses_f, g1_f, g2_f = scan_out_f
-                losses, g1_trace, g2_trace = scan_out
-                losses = jnp.concatenate([losses_f, losses])
-                g1_trace = jnp.concatenate([g1_f, g1_trace])
-                g2_trace = jnp.concatenate([g2_f, g2_trace])
-            else:
-                losses, g1_trace, g2_trace = scan_out
-            return params, losses, g1_trace, g2_trace
-        else:
-            if args.n_steps_map_freeze_shear > 0:
-                (losses_f,) = scan_out_f
-                (losses,) = scan_out
-                losses = jnp.concatenate([losses_f, losses])
-            else:
-                (losses,) = scan_out
-            return params, losses
+                for c in range(map_g1_phys.shape[0]):
+                    axes[1].plot(steps, map_g1_phys[c], alpha=0.7, label=f"chain {c}")
+                    axes[2].plot(steps, map_g2_phys[c], alpha=0.7, label=f"chain {c}")
+                axes[1].axhline(args.g1_true, color="r", ls="--", lw=1, label="true")
+                axes[2].axhline(args.g2_true, color="r", ls="--", lw=1, label="true")
+                if args.n_steps_map_freeze_shear > 0:
+                    axes[1].axvline(args.n_steps_map_freeze_shear, color="k", ls=":", alpha=0.5)
+                    axes[2].axvline(args.n_steps_map_freeze_shear, color="k", ls=":", alpha=0.5)
+                axes[1].set_xlabel("MAP step")
+                axes[1].set_ylabel("g1")
+                axes[1].set_title("g1 MAP trace")
+                axes[1].legend(fontsize=7)
+                axes[2].set_xlabel("MAP step")
+                axes[2].set_ylabel("g2")
+                axes[2].set_title("g2 MAP trace")
+                axes[2].legend(fontsize=7)
 
-    map_results = jax.vmap(find_map)(map_init_val)
-    if has_shear:
-        init_val, map_losses, map_g1_trace, map_g2_trace = map_results
-    else:
-        init_val, map_losses = map_results
-
-    g_rescale = args.g_prior_scale / args.g_prior_sigma
-
-    # Print MAP diagnostics
-    if has_shear:
-        print(
-            init_val["g1"] * g_rescale,
-            init_val["g2"] * g_rescale,
-        )
-        print(
-            f"Initial guess: g1={init_val['g1']*g_rescale}, g2={init_val['g2']*g_rescale}",
-            file=log_file,
-        )
-    print(f"MAP final loss (per chain): {map_losses[:, -1]}", file=log_file)
-
-    if args.save_plots:
-        # Plot MAP convergence: loss and g1,g2 evolution
-        n_map_plots = 3 if has_shear else 1
-        fig, axes = plt.subplots(1, n_map_plots, figsize=(5 * n_map_plots, 4))
-        if n_map_plots == 1:
-            axes = [axes]
-        total_map_steps = (args.n_steps_map_freeze_shear if has_shear else 0) + args.n_steps_map
-        steps = jnp.arange(total_map_steps)
-
-        # Loss (log scale, shift to ensure positive values)
-        loss_min = jnp.min(map_losses)
-        loss_offset = jnp.where(loss_min < 0, jnp.abs(loss_min) + 1.0, 0.0)
-        for c in range(map_losses.shape[0]):
-            axes[0].plot(steps, map_losses[c] + loss_offset, alpha=0.7, label=f"chain {c}")
-        axes[0].set_yscale("log")
-        if has_shear and args.n_steps_map_freeze_shear > 0:
-            axes[0].axvline(args.n_steps_map_freeze_shear, color="k", ls=":", alpha=0.5, label="unfreeze g")
-        axes[0].set_xlabel("MAP step")
-        ylabel = "Loss (NLL)" if loss_offset == 0 else f"Loss (NLL + {loss_offset:.1f})"
-        axes[0].set_ylabel(ylabel)
-        axes[0].set_title("MAP loss")
-        axes[0].legend(fontsize=7)
-
-        if has_shear:
-            # g1 trace per chain: shape (n_chains, total_map_steps, 1) -> squeeze last dim
-            map_g1_phys = map_g1_trace.squeeze(-1) * g_rescale  # (n_chains, total_steps)
-            map_g2_phys = map_g2_trace.squeeze(-1) * g_rescale
-
-            for c in range(map_g1_phys.shape[0]):
-                axes[1].plot(steps, map_g1_phys[c], alpha=0.7, label=f"chain {c}")
-                axes[2].plot(steps, map_g2_phys[c], alpha=0.7, label=f"chain {c}")
-            axes[1].axhline(args.g1_true, color="r", ls="--", lw=1, label="true")
-            axes[2].axhline(args.g2_true, color="r", ls="--", lw=1, label="true")
-            if args.n_steps_map_freeze_shear > 0:
-                axes[1].axvline(args.n_steps_map_freeze_shear, color="k", ls=":", alpha=0.5)
-                axes[2].axvline(args.n_steps_map_freeze_shear, color="k", ls=":", alpha=0.5)
-            axes[1].set_xlabel("MAP step")
-            axes[1].set_ylabel("g1")
-            axes[1].set_title("g1 MAP trace")
-            axes[1].legend(fontsize=7)
-            axes[2].set_xlabel("MAP step")
-            axes[2].set_ylabel("g2")
-            axes[2].set_title("g2 MAP trace")
-            axes[2].legend(fontsize=7)
-
-        fig.tight_layout()
-        fig.savefig(os.path.join(out_dir, "map_convergence.png"), dpi=150)
-        plt.close(fig)
-    if args.save_data:
-        np.save(os.path.join(out_dir, "radio_map_val.npy"), init_val, allow_pickle=True)
+            fig.tight_layout()
+            fig.savefig(os.path.join(out_dir, "map_convergence.png"), dpi=150)
+            plt.close(fig)
+        if args.save_data:
+            np.save(os.path.join(out_dir, "radio_map_val.npy"), init_val, allow_pickle=True)
 
     if args.point_estimate:
         if has_shear:
