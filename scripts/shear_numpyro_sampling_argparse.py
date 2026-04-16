@@ -446,41 +446,40 @@ def main():
     print(f"Random seed: {args.seed}", file=log_file)
     key = jax.random.PRNGKey(args.seed)
 
-    # Generate observations
-    model_data_gen = partial(
-        gen_gal_dataset,
-        Ngal=args.Ngal,
-        Npx=args.Npx,
-        pixel_scale=args.pixel_scale,
-        uv_pos=uv_pos,
-        noise_uv=args.noise_uv,
-        TRECS_fit_dir=args.trecs_data_path,
-        deepshape_dataset_dir=args.deepshape_data_path,
-        cosmos_dataset_dir=args.cosmos_data_path,
-        cosmos_sample=args.cosmos_sample,
-        ell_scale=args.ell_scale,
-        g1=args.g1_true,
-        g2=args.g2_true,
-        profile_type=args.data_profile,
-        n=args.sersic_index,
-        cosmos_seed=args.seed,
-    )
-    seeded_model_data_gen = seed(model_data_gen, key)
-    # Conditioning model to generate observation with [g1, g2]
-    # conditionned_model = condition(
-    #     seeded_model_data_gen,
-    #     {
-    #         "g1": args.g1_true * jnp.ones((1,)) / (args.g_scale / args.g_sigma),
-    #         "g2": args.g2_true * jnp.ones((1,)) / (args.g_scale / args.g_sigma),
-    #     },
-    # )
-    data, data_params = seeded_model_data_gen()
+    # Generate or load observations
+    data_file = os.path.join(out_dir, "radio_data.npy")
+    if args.precomputed_map and os.path.exists(data_file):
+        print(f"Loading precomputed data from {data_file}")
+        print(f"Loading precomputed data from {data_file}", file=log_file)
+        data = jnp.array(np.load(data_file))
+        data_params = np.load(os.path.join(out_dir, "radio_data_params.npy"), allow_pickle=True)[()]
+    else:
+        model_data_gen = partial(
+            gen_gal_dataset,
+            Ngal=args.Ngal,
+            Npx=args.Npx,
+            pixel_scale=args.pixel_scale,
+            uv_pos=uv_pos,
+            noise_uv=args.noise_uv,
+            TRECS_fit_dir=args.trecs_data_path,
+            deepshape_dataset_dir=args.deepshape_data_path,
+            cosmos_dataset_dir=args.cosmos_data_path,
+            cosmos_sample=args.cosmos_sample,
+            ell_scale=args.ell_scale,
+            g1=args.g1_true,
+            g2=args.g2_true,
+            profile_type=args.data_profile,
+            n=args.sersic_index,
+            cosmos_seed=args.seed,
+        )
+        seeded_model_data_gen = seed(model_data_gen, key)
+        data, data_params = seeded_model_data_gen()
 
-    # Save the data
-    if args.save_data:
-        np.save(os.path.join(out_dir, "radio_data.npy"), data)
-        np.save(os.path.join(out_dir, "radio_data_params.npy"), data_params)
-        np.save(os.path.join(out_dir, "radio_psf_mask.npy"), mask)
+        # Save the data
+        if args.save_data:
+            np.save(os.path.join(out_dir, "radio_data.npy"), data)
+            np.save(os.path.join(out_dir, "radio_data_params.npy"), data_params)
+            np.save(os.path.join(out_dir, "radio_psf_mask.npy"), mask)
 
     key, subkey = jax.random.split(key)
 
