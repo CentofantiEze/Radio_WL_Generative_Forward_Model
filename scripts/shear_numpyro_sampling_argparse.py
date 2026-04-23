@@ -1,4 +1,5 @@
 import warnings
+from datetime import datetime
 from functools import partial
 from pathlib import Path
 
@@ -386,6 +387,8 @@ def main():
 
     # create log file
     log_file = open(os.path.join(out_dir, "radio_sampling.log"), "w")
+    t_start = datetime.now()
+    print(f"Start: {t_start.strftime('%Y-%m-%d %H:%M:%S')}", file=log_file)
 
     # print parameters to log file
     print(f"Ngal: {args.Ngal}", file=log_file)
@@ -916,6 +919,8 @@ def main():
         else:
             print("No shear parameters — point estimate not applicable")
         print(f"Point estimate saved to {out_dir}", file=log_file)
+        t_end = datetime.now()
+        print(f"End: {t_end.strftime('%Y-%m-%d %H:%M:%S')} (elapsed: {t_end - t_start})", file=log_file)
         log_file.close()
         sys.exit(0)
 
@@ -1134,6 +1139,8 @@ def main():
                        f"step_size={parameters.step_size}, L={parameters.L}")
                 print(msg)
                 print(msg, file=log_file)
+                t_end = datetime.now()
+                print(f"End: {t_end.strftime('%Y-%m-%d %H:%M:%S')} (elapsed: {t_end - t_start})", file=log_file)
                 log_file.close()
                 raise RuntimeError(msg)
 
@@ -1717,6 +1724,8 @@ def main():
         json.dump(vars(args), f, indent=4)
 
     # Save log file
+    t_end = datetime.now()
+    print(f"End: {t_end.strftime('%Y-%m-%d %H:%M:%S')} (elapsed: {t_end - t_start})", file=log_file)
     log_file.close()
 
     print("Done.")
