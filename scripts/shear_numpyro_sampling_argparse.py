@@ -1075,10 +1075,10 @@ def main():
         grad_norm = jnp.linalg.norm(ravel_pytree(grad_at_map)[0])
         initial_step_size = float(jnp.sqrt(ndim) / grad_norm) * (DESIRED_ENERGY_VAR / 1e-2) ** 0.25
         initial_L = float(jnp.sqrt(ndim)) * initial_step_size
-        print(f"MCLMC init: ndim={ndim}, grad_norm={float(grad_norm):.2f}, "
-              f"initial_step_size={initial_step_size:.6f}, initial_L={initial_L:.4f}")
-        print(f"MCLMC init: ndim={ndim}, grad_norm={float(grad_norm):.2f}, "
-              f"initial_step_size={initial_step_size:.6f}, initial_L={initial_L:.4f}", file=log_file)
+        print(f"MCLMC init: ndim={ndim}, grad_norm={float(grad_norm):.3e}, "
+              f"initial_step_size={initial_step_size:.3e}, initial_L={initial_L:.3e}")
+        print(f"MCLMC init: ndim={ndim}, grad_norm={float(grad_norm):.3e}, "
+              f"initial_step_size={initial_step_size:.3e}, initial_L={initial_L:.3e}", file=log_file)
 
         def mclmc_factory(inverse_mass_matrix):
             return blackjax.mcmc.mclmc.build_kernel(
