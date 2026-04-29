@@ -1073,6 +1073,30 @@ def main():
         DESIRED_ENERGY_VAR = 1e-3
         grad_at_map = jax.grad(log_prob_fn)(first_chain_init)
         grad_norm = jnp.linalg.norm(ravel_pytree(grad_at_map)[0])
+
+        # MAP convergence diagnostic: ‖∇‖ should drop by orders of magnitude
+        # between pre-MAP and post-MAP. If reduction is small, MAP didn't
+        # converge and the gradient-based step_size formula will underestimate.
+        first_chain_pre_map = jax.tree.map(lambda x: x[0], init_val_)
+        grad_pre_map_norm = jnp.linalg.norm(
+            ravel_pytree(jax.grad(log_prob_fn)(first_chain_pre_map))[0]
+        )
+        reduction = float(grad_pre_map_norm / grad_norm) if float(grad_norm) > 0 else float("inf")
+        print(f"MAP gradient reduction: ‖∇‖ pre-MAP={float(grad_pre_map_norm):.3e}, "
+              f"post-MAP={float(grad_norm):.3e}, factor={reduction:.1f}x")
+        print(f"MAP gradient reduction: ‖∇‖ pre-MAP={float(grad_pre_map_norm):.3e}, "
+              f"post-MAP={float(grad_norm):.3e}, factor={reduction:.1f}x", file=log_file)
+
+        # Per-group ‖∇‖ at MAP — identifies which parameters did/didn't converge.
+        print("Per-group ‖∇‖ at MAP:")
+        print("Per-group ‖∇‖ at MAP:", file=log_file)
+        for k in sorted(grad_at_map.keys()):
+            g_flat = grad_at_map[k].ravel()
+            line = (f"  {k:>12s}: ‖∇‖={float(jnp.linalg.norm(g_flat)):.3e}, "
+                    f"max|∂|={float(jnp.max(jnp.abs(g_flat))):.3e}")
+            print(line)
+            print(line, file=log_file)
+
         initial_step_size = float(jnp.sqrt(ndim) / grad_norm) * (DESIRED_ENERGY_VAR / 1e-2) ** 0.25
         initial_L = float(jnp.sqrt(ndim)) * initial_step_size
         print(f"MCLMC init: ndim={ndim}, grad_norm={float(grad_norm):.3e}, "
