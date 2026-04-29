@@ -14,6 +14,7 @@ import optax
 import equinox as eqx
 import blackjax.adaptation.mclmc_adaptation as mclmc_adj
 from einops import rearrange
+from jax.flatten_util import ravel_pytree
 from numpyro.handlers import seed, trace
 
 warnings.filterwarnings("ignore")
@@ -1063,13 +1064,21 @@ def main():
         key_init, key_tune = jax.random.split(key_warmup)
         key_init_chains = jax.random.split(key_init, args.num_chains)
 
-        # Compute dimensionality for initial L and step_size heuristics
+        # Compute dimensionality and gradient at MAP for initial step_size/L.
+        # Gradient-norm scaling (sqrt(dim)/grad_norm) keeps the leapfrog energy
+        # error in a safe regime: overshooting causes a NaN cascade that
+        # collapses step_size to 0 permanently. Undershooting just costs warmup.
         first_chain_init = jax.tree.map(lambda x: x[0], init_val)
         ndim = sum(v.size for v in jax.tree.leaves(first_chain_init))
-        initial_L = jnp.sqrt(float(ndim))
-        # initial_step_size = initial_L / ndim
-        initial_step_size = args.lr_map  # Use MAP learning rate as heuristic for MCLMC step size
-        print(f"MCLMC init: ndim={ndim}, initial_L={initial_L:.2f}, initial_step_size={initial_step_size:.4f}")
+        DESIRED_ENERGY_VAR = 1e-3
+        grad_at_map = jax.grad(log_prob_fn)(first_chain_init)
+        grad_norm = jnp.linalg.norm(ravel_pytree(grad_at_map)[0])
+        initial_step_size = float(jnp.sqrt(ndim) / grad_norm) * (DESIRED_ENERGY_VAR / 1e-2) ** 0.25
+        initial_L = float(jnp.sqrt(ndim)) * initial_step_size
+        print(f"MCLMC init: ndim={ndim}, grad_norm={float(grad_norm):.2f}, "
+              f"initial_step_size={initial_step_size:.6f}, initial_L={initial_L:.4f}")
+        print(f"MCLMC init: ndim={ndim}, grad_norm={float(grad_norm):.2f}, "
+              f"initial_step_size={initial_step_size:.6f}, initial_L={initial_L:.4f}", file=log_file)
 
         def mclmc_factory(inverse_mass_matrix):
             return blackjax.mcmc.mclmc.build_kernel(
@@ -1097,7 +1106,7 @@ def main():
             print(f"MCLMC diagonal inverse mass matrix: g1/g2={args.mclmc_inv_mass_shear}, others=1.0")
             print(f"MCLMC diagonal inverse mass matrix: g1/g2={args.mclmc_inv_mass_shear}, others=1.0", file=log_file)
         else:
-            inverse_mass_matrix = 1.0
+            inverse_mass_matrix = jnp.ones((ndim,))
 
         temp_kernel = blackjax.mclmc(
             log_prob_fn,
