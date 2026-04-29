@@ -140,8 +140,9 @@ def draw_NN_profile(z, flux, g1, g2, key, uv_pos, Npx, pixel_scale_vae=0.03, jit
         _force_maxk=np.pi / pixel_scale_vae
     )
 
+    # DEBUG : no_flux
     # Set flux
-    y_gs = y_gs.withFlux(flux)
+    # y_gs = y_gs.withFlux(flux)
 
     # Apply shear
     y_gs = y_gs.shear(g1=g1, g2=g2)
