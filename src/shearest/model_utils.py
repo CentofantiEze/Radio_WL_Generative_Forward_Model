@@ -559,8 +559,10 @@ def model_fn_VAE_flow(
     g = to_unit_disk(g)
 
     # flux
-    flux_z = numpyro.sample("flux", dist.Normal(jnp.zeros((Ngal,)), flux_sigma * jnp.ones((Ngal,))))
-    flux = flux_min + jax.nn.sigmoid(flux_z / flux_sigma) * (flux_max - flux_min)
+    # DEBUG : no_flux
+    flux = None
+    # flux_z = numpyro.sample("flux", dist.Normal(jnp.zeros((Ngal,)), flux_sigma * jnp.ones((Ngal,))))
+    # flux = flux_min + jax.nn.sigmoid(flux_z / flux_sigma) * (flux_max - flux_min)
 
     if use_dropout:
         key = numpyro.prng_key()

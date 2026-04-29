@@ -117,13 +117,10 @@ def draw_HST_profiles(Ngal, dataset_dir, flux_batch, g1, g2, uv_pos, Npx, pixel_
         gal_type = 'real'
     for i, ind in enumerate(indices):
         gal_ = catalog.makeGalaxy(ind, gal_type=gal_type)
-        # Use the un-convolved galaxy profile
-        # psf = gal_.original_psf
-        # gal_ = gs.Convolve([gal_, psf])
-        # Use the original flux
         # Convolve with gaussian to ensure finite support in Fourier space (for numerical stability)
         gal_ = gs.Convolve([gal_, gs.Gaussian(sigma=2*pixel_scale_hst)])
-        gal_ = gal_.withFlux(flux_batch[i])
+        # DEBUG : no_flux
+        # gal_ = gal_.withFlux(flux_batch[i])
         gal_ = gal_.shear(g1=g1, g2=g2)
         gal_kimage_ = gal_.drawKImage(nx=Npx, ny=Npx, scale=2*np.pi/pixel_scale_hst/Npx).array
         vis = gal_kimage_[uv_pos]
@@ -261,7 +258,8 @@ def gen_gal_dataset(
         im_gal, indices = draw_HST_profiles(
             Ngal=Ngal,
             dataset_dir=cosmos_dataset_dir,
-            flux_batch=flux_batch,
+            # DEBUG : no_flux
+            # flux_batch=flux_batch,
             g1=g1,
             g2=g2,
             uv_pos=uv_pos,
@@ -273,7 +271,8 @@ def gen_gal_dataset(
         data_params = {
             "profile_type": profile_type,
             "indices": indices,
-            "flux": flux_batch,
+            # DEBUG : no_flux
+            # "flux": flux_batch,
             "g1": g1,
             "g2": g2,
         }
