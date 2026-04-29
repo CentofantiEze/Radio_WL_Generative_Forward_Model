@@ -1097,12 +1097,24 @@ def main():
             print(line)
             print(line, file=log_file)
 
-        initial_step_size = float(jnp.sqrt(ndim) / grad_norm) * (DESIRED_ENERGY_VAR / 1e-2) ** 0.25
+        # Fallback: when grad_norm is enormous (un-converged MAP or stiff
+        # likelihood), the formula collapses step_size to ~0 and the EMA in
+        # phase 1 cannot recover within frac_tune1·n_warmup steps. Floor at
+        # args.lr_map so adaptation starts from a workable scale.
+        formula_step_size = float(jnp.sqrt(ndim) / grad_norm) * (DESIRED_ENERGY_VAR / 1e-2) ** 0.25
+        if formula_step_size < args.lr_map:
+            initial_step_size = args.lr_map
+            init_source = f"floor=lr_map ({args.lr_map:.3e}; formula gave {formula_step_size:.3e})"
+        else:
+            initial_step_size = formula_step_size
+            init_source = f"gradient formula ({formula_step_size:.3e})"
         initial_L = float(jnp.sqrt(ndim)) * initial_step_size
         print(f"MCLMC init: ndim={ndim}, grad_norm={float(grad_norm):.3e}, "
-              f"initial_step_size={initial_step_size:.3e}, initial_L={initial_L:.3e}")
+              f"initial_step_size={initial_step_size:.3e}, initial_L={initial_L:.3e} "
+              f"[{init_source}]")
         print(f"MCLMC init: ndim={ndim}, grad_norm={float(grad_norm):.3e}, "
-              f"initial_step_size={initial_step_size:.3e}, initial_L={initial_L:.3e}", file=log_file)
+              f"initial_step_size={initial_step_size:.3e}, initial_L={initial_L:.3e} "
+              f"[{init_source}]", file=log_file)
 
         def mclmc_factory(inverse_mass_matrix):
             return blackjax.mcmc.mclmc.build_kernel(
