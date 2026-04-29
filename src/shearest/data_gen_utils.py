@@ -260,6 +260,7 @@ def gen_gal_dataset(
             dataset_dir=cosmos_dataset_dir,
             # DEBUG : no_flux
             # flux_batch=flux_batch,
+            flux_batch=None,
             g1=g1,
             g2=g2,
             uv_pos=uv_pos,
