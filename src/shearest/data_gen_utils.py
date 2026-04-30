@@ -119,6 +119,9 @@ def draw_HST_profiles(Ngal, dataset_dir, flux_batch, g1, g2, uv_pos, Npx, pixel_
         gal_ = catalog.makeGalaxy(ind, gal_type=gal_type)
         # Convolve with gaussian to ensure finite support in Fourier space (for numerical stability)
         gal_ = gs.Convolve([gal_, gs.Gaussian(sigma=2*pixel_scale_hst)])
+        # # DEBUG : HST psf
+        # psf = gal_.original_psf
+        # gal_ =  gs.Convolve([gal_, psf])
         # DEBUG : no_flux
         # gal_ = gal_.withFlux(flux_batch[i])
         gal_ = gal_.shear(g1=g1, g2=g2)
@@ -143,6 +146,9 @@ def draw_NN_profile(z, flux, g1, g2, key, uv_pos, Npx, pixel_scale_vae=0.03, jit
     # DEBUG : no_flux
     # Set flux
     # y_gs = y_gs.withFlux(flux)
+
+    # Apply PSF convlution
+    y_gs = gs.Convolve([y_gs, gs.Gaussian(sigma=2*pixel_scale_vae)])
 
     # Apply shear
     y_gs = y_gs.shear(g1=g1, g2=g2)
