@@ -147,8 +147,8 @@ def draw_NN_profile(z, flux, g1, g2, key, uv_pos, Npx, pixel_scale_vae=0.03, jit
     # Set flux
     # y_gs = y_gs.withFlux(flux)
 
-    # Apply PSF convlution
-    y_gs = gs.Convolve([y_gs, gs.Gaussian(sigma=2*pixel_scale_vae)])
+    # Apply PSF convolution
+    y_gs = galsim.Convolve([y_gs, galsim.Gaussian(sigma=2*pixel_scale_vae)])
 
     # Apply shear
     y_gs = y_gs.shear(g1=g1, g2=g2)
