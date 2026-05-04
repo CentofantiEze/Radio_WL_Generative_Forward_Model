@@ -1173,6 +1173,13 @@ def main():
                                                 num_steps=args.n_warmup,
                                                 state=first_chain_state,
                                                 rng_key=key_retry,
+                                                frac_tune1=0.4,
+                                                frac_tune2=0.4,
+                                                frac_tune3=0.2,
+                                                desired_energy_var=1e-3,
+                                                trust_in_estimate=2.0,
+                                                num_effective_samples=50,
+                                                diagonal_preconditioning=True,
                 )
 
                 if parameters.step_size > 0 and parameters.L > 0:
