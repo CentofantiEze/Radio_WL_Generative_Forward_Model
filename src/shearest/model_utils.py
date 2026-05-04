@@ -438,16 +438,21 @@ def model_fn_VAE_flow_noshear(
 
     # Transform u -> z via the flow bijection
     u_flat = u.reshape(Ngal, -1)
-    cond_rep = jnp.tile(flow_condition, (Ngal, 1))
-    z_flat = jax.vmap(flow_forward)(u_flat, cond_rep)
+    if flow_condition is not None:
+        cond_rep = jnp.tile(flow_condition, (Ngal, 1))
+        z_flat = jax.vmap(flow_forward)(u_flat, cond_rep)
+    else:
+        z_flat = jax.vmap(flow_forward)(u_flat)
     z = z_flat.reshape(Ngal, latent_dim, latent_dim)
 
     # No shear — g1=g2=0
     g = jnp.zeros((2, Ngal))
 
     # flux
-    flux_z = numpyro.sample("flux", dist.Normal(jnp.zeros((Ngal,)), flux_sigma * jnp.ones((Ngal,))))
-    flux = flux_min + jax.nn.sigmoid(flux_z / flux_sigma) * (flux_max - flux_min)
+    # DEBUG : no_flux
+    flux = None
+    # flux_z = numpyro.sample("flux", dist.Normal(jnp.zeros((Ngal,)), flux_sigma * jnp.ones((Ngal,))))
+    # flux = flux_min + jax.nn.sigmoid(flux_z / flux_sigma) * (flux_max - flux_min)
 
     if use_dropout:
         key = numpyro.prng_key()
