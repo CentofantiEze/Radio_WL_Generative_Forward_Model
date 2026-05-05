@@ -1107,8 +1107,10 @@ def main():
         # args.lr_map so adaptation starts from a workable scale.
         formula_step_size = float(jnp.sqrt(ndim) / grad_norm) * (DESIRED_ENERGY_VAR / 1e-2) ** 0.25
         if formula_step_size < args.lr_map:
-            initial_step_size = args.lr_map
-            init_source = f"floor=lr_map ({args.lr_map:.3e}; formula gave {formula_step_size:.3e})"
+            # initial_step_size = args.lr_map
+            # init_source = f"floor=lr_map ({args.lr_map:.3e}; formula gave {formula_step_size:.3e})"
+            initial_step_size = .1
+            init_source = f"floor= {initial_step_size:.3e} (formula gave {formula_step_size:.3e})"
         else:
             initial_step_size = formula_step_size
             init_source = f"gradient formula ({formula_step_size:.3e})"
