@@ -1167,24 +1167,57 @@ def main():
                 inverse_mass_matrix=jnp.array(inverse_mass_matrix),
             )
         else:
+            # Build phase-1+2 adaptation factory once. Calling
+            # make_L_step_size_adaptation directly (instead of the
+            # mclmc_find_L_and_step_size wrapper) lets us inject the
+            # gradient-aware initial L/step_size computed above. The wrapper
+            # would discard them and start at L=sqrt(dim), step_size=sqrt(dim)*0.25,
+            # which for stiff radio likelihoods triggers a NaN cascade and
+            # wastes phase-1 steps on step_size_max recovery.
+            frac_tune1, frac_tune2, frac_tune3 = 0.4, 0.4, 0.2
+            L_step_size_adapt = mclmc_adj.make_L_step_size_adaptation(
+                kernel=mclmc_factory,
+                dim=ndim,
+                frac_tune1=frac_tune1,
+                frac_tune2=frac_tune2,
+                desired_energy_var=1e-3,
+                trust_in_estimate=2.0,
+                num_effective_samples=50,
+                diagonal_preconditioning=True,
+            )
+
+            initial_params = mclmc_adj.MCLMCAdaptationState(
+                L=jnp.array(initial_L),
+                step_size=jnp.array(initial_step_size),
+                inverse_mass_matrix=jnp.array(inverse_mass_matrix),
+            )
+
             max_adapt_attempts = 10
             for adapt_attempt in range(1, max_adapt_attempts + 1):
                 print(f"MCLMC adaptation attempt {adapt_attempt}/{max_adapt_attempts}...")
                 key_tune, key_retry = jax.random.split(key_tune)
+                key_phase12, key_phase3 = jax.random.split(key_retry)
 
-                adapted_state, parameters, _ = mclmc_adj.mclmc_find_L_and_step_size(
-                                                mclmc_kernel=mclmc_factory,
-                                                num_steps=args.n_warmup,
-                                                state=first_chain_state,
-                                                rng_key=key_retry,
-                                                frac_tune1=0.4,
-                                                frac_tune2=0.4,
-                                                frac_tune3=0.2,
-                                                desired_energy_var=1e-3,
-                                                trust_in_estimate=2.0,
-                                                num_effective_samples=50,
-                                                diagonal_preconditioning=True,
+                # Phase 1+2: adapt step_size, L, and inverse_mass_matrix
+                adapted_state, parameters = L_step_size_adapt(
+                    first_chain_state, initial_params, args.n_warmup, key_phase12
                 )
+                print(f"  After phase 1+2: L={float(parameters.L):.6f}, "
+                      f"step_size={float(parameters.step_size):.8f}")
+
+                # Phase 3: refine L via ESS — only if phase 1+2 didn't collapse.
+                # A collapsed phase 1+2 means L or step_size went to ~0 (dead chain),
+                # so phase 3 would just propagate the dead state.
+                chain_ok = float(parameters.L) > 1e-10 and float(parameters.step_size) > 1e-10
+                if chain_ok and frac_tune3 > 0:
+                    adapted_kernel = mclmc_factory(parameters.inverse_mass_matrix)
+                    adapted_state, parameters = mclmc_adj.make_adaptation_L(
+                        adapted_kernel, frac=frac_tune3, Lfactor=0.4
+                    )(adapted_state, parameters, args.n_warmup, key_phase3)
+                    print(f"  After phase 3:   L={float(parameters.L):.6f}, "
+                          f"step_size={float(parameters.step_size):.8f}")
+                elif not chain_ok:
+                    print(f"  Phase 1+2 collapsed; skipping phase 3")
 
                 if parameters.step_size > 0 and parameters.L > 0:
                     break
