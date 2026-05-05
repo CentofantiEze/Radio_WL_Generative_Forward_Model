@@ -199,6 +199,9 @@ def main():
         help="COSMOS dataset sample to use: 23.5 or 25.2",
     )
     parser.add_argument(
+        "--mag_cut", type=float, default=None, help="Optional magnitude cut for COSMOS sample"
+    )
+    parser.add_argument(
         "--data_profile", type=str, default="exp", help="Galaxy dataset profile type: exp, sersic, spergel or real"
     )
     parser.add_argument(
@@ -475,6 +478,7 @@ def main():
             profile_type=args.data_profile,
             n=args.sersic_index,
             cosmos_seed=args.seed,
+            mag_cut=args.mag_cut
         )
         seeded_model_data_gen = seed(model_data_gen, key)
         data, data_params = seeded_model_data_gen()

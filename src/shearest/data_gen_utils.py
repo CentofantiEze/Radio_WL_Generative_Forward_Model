@@ -105,11 +105,16 @@ def draw_composite_profile(hlr_disk, hlr_bulge, flux, flux_db_ratio, e_bulge_1, 
 
     return complex_2_stack(vis)
 
-def draw_HST_profiles(Ngal, dataset_dir, flux_batch, g1, g2, uv_pos, Npx, pixel_scale_hst=0.03, profile_type="real", sample="25.2", seed=None):
+def draw_HST_profiles(Ngal, dataset_dir, flux_batch, g1, g2, uv_pos, Npx, pixel_scale_hst=0.03, profile_type="real", sample="25.2", seed=None, mag_cut=None):
 
     catalog = gs.COSMOSCatalog(sample=sample, dir=dataset_dir)
     rng = np.random.default_rng(seed)
-    indices = rng.choice(catalog.getNObjects(), Ngal, replace=False)
+    if mag_cut is not None:
+        mag_cut_list = np.where(catalog.param_cat[catalog.orig_index]['mag_auto'] > mag_cut)[0]
+        print(f'{len(mag_cut_list)} sources with mag_auto > {mag_cut}.')
+        indices = rng.choice(mag_cut_list, Ngal, replace=False)
+    else:
+        indices = rng.choice(catalog.getNObjects(), Ngal, replace=False)
     im_gal = []
     if profile_type == "cosmos":
         gal_type = 'parametric'
@@ -245,6 +250,7 @@ def gen_gal_dataset(
     profile_type=None,
     n=None,
     cosmos_seed=None,
+    mag_cut=None,
 ):
 
     hlr_batch, flux_batch, e_batch, n_batch = sample_galaxy_params(
@@ -275,6 +281,7 @@ def gen_gal_dataset(
             profile_type=profile_type,
             sample=cosmos_sample,
             seed=cosmos_seed,
+            mag_cut=mag_cut,
         )
         data_params = {
             "profile_type": profile_type,
