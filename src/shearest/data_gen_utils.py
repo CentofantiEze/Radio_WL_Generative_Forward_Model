@@ -117,6 +117,7 @@ def draw_HST_profiles(Ngal, dataset_dir, flux_batch, g1, g2, uv_pos, Npx, pixel_
         gal_type = 'real'
     for i, ind in enumerate(indices):
         gal_ = catalog.makeGalaxy(ind, gal_type=gal_type)
+        gal_ = gal_.shear(g1=g1, g2=g2)
         # Convolve with gaussian to ensure finite support in Fourier space (for numerical stability)
         gal_ = gs.Convolve([gal_, gs.Gaussian(sigma=2*pixel_scale_hst)])
         # # DEBUG : HST psf
@@ -124,7 +125,6 @@ def draw_HST_profiles(Ngal, dataset_dir, flux_batch, g1, g2, uv_pos, Npx, pixel_
         # gal_ =  gs.Convolve([gal_, psf])
         # DEBUG : no_flux
         # gal_ = gal_.withFlux(flux_batch[i])
-        gal_ = gal_.shear(g1=g1, g2=g2)
         gal_kimage_ = gal_.drawKImage(nx=Npx, ny=Npx, scale=2*np.pi/pixel_scale_hst/Npx).array
         vis = gal_kimage_[uv_pos]
         im_gal.append(complex_2_stack(vis))
@@ -143,15 +143,15 @@ def draw_NN_profile(z, flux, g1, g2, key, uv_pos, Npx, pixel_scale_vae=0.03, jit
         _force_maxk=np.pi / pixel_scale_vae
     )
 
+    # Apply shear
+    y_gs = y_gs.shear(g1=g1, g2=g2)
+
     # DEBUG : no_flux
     # Set flux
     # y_gs = y_gs.withFlux(flux)
 
     # Apply PSF convolution
     y_gs = galsim.Convolve([y_gs, galsim.Gaussian(sigma=2*pixel_scale_vae)])
-
-    # Apply shear
-    y_gs = y_gs.shear(g1=g1, g2=g2)
     
     # Draw kimage
     y_kimage = y_gs.drawKImage(nx=Npx, ny=Npx, scale=2*np.pi/pixel_scale_vae/Npx)
