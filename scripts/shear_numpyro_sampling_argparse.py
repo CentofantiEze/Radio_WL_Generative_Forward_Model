@@ -173,7 +173,8 @@ def main():
     parser.add_argument(
         "--pixel_scale", type=float, default=0.15, help="Pixel scale in arcsec/pixel"
     )
-    parser.add_argument("--noise_uv", type=float, default=0.004, help="UV noise level")
+    parser.add_argument("--noise_uv", type=float, default=0.004, help="UV noise level for the model likelihood (and for data generation when --noise_data is not set)")
+    parser.add_argument("--noise_data", type=float, default=None, help="UV noise level for data generation. If None, uses --noise_uv (backwards-compatible).")
     parser.add_argument(
         "--trecs_data_path",
         type=str,
@@ -399,7 +400,8 @@ def main():
     print(f"Npx: {args.Npx}", file=log_file)
     print(f"pixel_scale: {args.pixel_scale}", file=log_file)
     print(f"fov_size: {fov_size}", file=log_file)
-    print(f"noise_uv: {args.noise_uv}", file=log_file)
+    print(f"noise_uv (model): {args.noise_uv}", file=log_file)
+    print(f"noise_data: {args.noise_data if args.noise_data is not None else f'{args.noise_uv} (fallback to noise_uv)'}", file=log_file)
     print(f"g1_true: {args.g1_true}", file=log_file)
     print(f"g2_true: {args.g2_true}", file=log_file)
     print(f"Ellipticity scale (data gen): {args.ell_scale}", file=log_file)
@@ -461,13 +463,14 @@ def main():
         data = jnp.array(np.load(data_file))
         data_params = np.load(os.path.join(out_dir, "radio_data_params.npy"), allow_pickle=True)[()]
     else:
+        noise_uv_data = args.noise_data if args.noise_data is not None else args.noise_uv
         model_data_gen = partial(
             gen_gal_dataset,
             Ngal=args.Ngal,
             Npx=args.Npx,
             pixel_scale=args.pixel_scale,
             uv_pos=uv_pos,
-            noise_uv=args.noise_uv,
+            noise_uv=noise_uv_data,
             TRECS_fit_dir=args.trecs_data_path,
             deepshape_dataset_dir=args.deepshape_data_path,
             cosmos_dataset_dir=args.cosmos_data_path,
