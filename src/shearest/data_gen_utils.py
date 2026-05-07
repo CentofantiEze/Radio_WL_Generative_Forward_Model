@@ -131,6 +131,8 @@ def draw_HST_profiles(Ngal, dataset_dir, flux_batch, g1, g2, uv_pos, Npx, pixel_
         # DEBUG : no_flux
         # gal_ = gal_.withFlux(flux_batch[i])
         gal_kimage_ = gal_.drawKImage(nx=Npx, ny=Npx, scale=2*np.pi/pixel_scale_hst/Npx).array
+        # DEBUG : Rescale images by sqrt(# pixels) = Npx
+        gal_kimage_ = gal_kimage_ / Npx
         vis = gal_kimage_[uv_pos]
         im_gal.append(complex_2_stack(vis))
     return jnp.array(im_gal), indices
@@ -163,6 +165,9 @@ def draw_NN_profile(z, flux, g1, g2, key, uv_pos, Npx, pixel_scale_vae=0.03, jit
 
     # Get array
     y_kimage_array = y_kimage.array
+
+    # DEBUG : Rescale images by sqrt(# pixels) = Npx
+    y_kimage_array = y_kimage_array / Npx
     
     # Sample visibilities
     vis = y_kimage_array[uv_pos]
