@@ -137,6 +137,69 @@ def draw_HST_profiles(Ngal, dataset_dir, flux_batch, g1, g2, uv_pos, Npx, pixel_
         im_gal.append(complex_2_stack(vis))
     return jnp.array(im_gal), indices
 
+def draw_AE_HST_profiles(Ngal, dataset_dir, ae, g1, g2, uv_pos, Npx,
+                          pixel_scale_hst=0.03, pixel_scale_vae=0.03,
+                          sample="25.2", seed=None, mag_cut=None):
+    """Generate visibilities from COSMOS galaxies passed through the AE.
+
+    For each selected COSMOS galaxy: draw the HST obs+psf stamps (matching the
+    training-stamp generation in scripts/examples/cosmos.py), encode through
+    the AE, take the decoded intrinsic galaxy `g`, then apply shear + Gaussian
+    PSF + drawKImage with regular galsim (matching draw_HST_profiles).
+
+    The result lies on the AE's manifold by construction, so a model that uses
+    the same AE for inference can match the data exactly when z = z_enc.
+
+    Returns (visibilities, indices, z_enc).
+    """
+    catalog = gs.COSMOSCatalog(sample=sample, dir=dataset_dir)
+    rng = np.random.default_rng(seed)
+    if mag_cut is not None:
+        mag_cut_list = np.where(catalog.param_cat[catalog.orig_index]['mag_auto'] > mag_cut)[0]
+        print(f'{len(mag_cut_list)} sources with mag_auto > {mag_cut}.')
+        indices = rng.choice(mag_cut_list, Ngal, replace=False)
+    else:
+        indices = rng.choice(catalog.getNObjects(), Ngal, replace=False)
+
+    # Build obs+psf stamps the same way as cosmos.py (AE training data)
+    obs_list, psf_list = [], []
+    for ind in indices:
+        gal_real = catalog.makeGalaxy(int(ind), gal_type='real',
+                                       noise_pad_size=Npx * pixel_scale_hst)
+        psf = gal_real.original_psf
+        psf_im = psf.drawImage(nx=Npx, ny=Npx, scale=pixel_scale_hst,
+                               method='no_pixel').array.astype('float32')
+        obs_im = gs.Convolve(gal_real, psf).drawImage(
+            nx=Npx, ny=Npx, scale=pixel_scale_hst, method='no_pixel'
+        ).array.astype('float32')
+        obs_list.append(obs_im[None])  # (1, Npx, Npx)
+        psf_list.append(psf_im[None])
+
+    obs_arr = jnp.array(np.stack(obs_list))
+    psf_arr = jnp.array(np.stack(psf_list))
+
+    # Encode → decode through AE. The encoder returns (y, g, z); we keep g
+    # (intrinsic galaxy) for rendering and z (latent) for diagnostics.
+    _, g_dec, z_enc = jax.vmap(ae)(obs_arr, psf_arr)
+    g_dec_np = np.array(g_dec)  # (Ngal, 1, Npx, Npx)
+
+    # Render via regular galsim, matching draw_HST_profiles
+    im_gal = []
+    for i in range(Ngal):
+        gal_ = gs.InterpolatedImage(gs.Image(g_dec_np[i, 0], scale=pixel_scale_vae))
+        gal_ = gal_.shear(g1=g1, g2=g2)
+        gal_ = gs.Convolve([gal_, gs.Gaussian(sigma=2 * pixel_scale_vae)])
+        gal_kimage_ = gal_.drawKImage(
+            nx=Npx, ny=Npx, scale=2 * np.pi / pixel_scale_vae / Npx
+        ).array
+        # Match the rescale done in draw_HST_profiles / draw_NN_profile
+        gal_kimage_ = gal_kimage_ / Npx
+        vis = gal_kimage_[uv_pos]
+        im_gal.append(complex_2_stack(vis))
+
+    return jnp.array(im_gal), indices, np.array(z_enc)
+
+
 def draw_NN_profile(z, flux, g1, g2, key, uv_pos, Npx, pixel_scale_vae=0.03, jitted_decode=None, gsparams=None, use_dropout=False):
     # Decode the latent vector to get the galaxy image
     y = jitted_decode(z[None,:,:], key=key if use_dropout else None).astype(jnp.float32)
@@ -243,6 +306,7 @@ def gen_gal_dataset(
     Ngal=None,
     Npx=None,
     pixel_scale=None,
+    pixel_scale_vae=0.03,
     uv_pos=None,
     noise_uv=None,
     TRECS_fit_dir=None,
@@ -256,7 +320,37 @@ def gen_gal_dataset(
     n=None,
     cosmos_seed=None,
     mag_cut=None,
+    ae=None,
 ):
+
+    # VAE path skips sample_galaxy_params (no TRECS/deepshape needed) since the
+    # galaxy comes from the AE-decoded COSMOS stamp.
+    if profile_type == "VAE":
+        if ae is None:
+            raise ValueError("ae must be provided when profile_type='VAE'")
+        if cosmos_dataset_dir is None:
+            raise ValueError("cosmos_dataset_dir must be provided when profile_type='VAE'")
+        im_gal, indices, z_enc = draw_AE_HST_profiles(
+            Ngal=Ngal,
+            dataset_dir=cosmos_dataset_dir,
+            ae=ae,
+            g1=g1,
+            g2=g2,
+            uv_pos=uv_pos,
+            Npx=Npx,
+            pixel_scale_vae=pixel_scale_vae,
+            sample=cosmos_sample,
+            seed=cosmos_seed,
+            mag_cut=mag_cut,
+        )
+        data_params = {
+            "profile_type": profile_type,
+            "indices": indices,
+            "z_enc": z_enc,
+            "g1": g1,
+            "g2": g2,
+        }
+        return numpyro.sample("obs", dist.Normal(im_gal, noise_uv)), data_params
 
     hlr_batch, flux_batch, e_batch, n_batch = sample_galaxy_params(
         Ngal=Ngal,

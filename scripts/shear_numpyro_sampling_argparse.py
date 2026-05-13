@@ -279,6 +279,8 @@ def main():
     parser.add_argument("--latent_sigma", type=float, default=1.0, help="Latent space sampling sigma (rescaled back to physical scale).")
     parser.add_argument("--vae_path", type=str, default=None, help="Path to the trained VAE model.")
     parser.add_argument("--vae_epoch", type=int, default=None, help="Epoch of the trained VAE model.")
+    parser.add_argument("--data_vae_path", type=str, default=None, help="Path to a (full, non-distilled) AE for data generation when --data_profile=VAE. Falls back to --vae_path if not set. Must have a trained encoder.")
+    parser.add_argument("--data_vae_epoch", type=int, default=None, help="Epoch of the data-generation AE. Falls back to --vae_epoch if not set.")
     parser.add_argument("--vae_model_inference_mode", type=str, default="parallel", help="VAE model inference mode: parallel, sequential or batch.")
     parser.add_argument("--vae_inference_batch_size", type=int, default=1, help="VAE inference batch size if using batch mode.")
     parser.add_argument("--use_dropout", action="store_true", help="Enable VAE dropout during inference (disabled by default for deterministic decoding).")
@@ -464,11 +466,28 @@ def main():
         data_params = np.load(os.path.join(out_dir, "radio_data_params.npy"), allow_pickle=True)[()]
     else:
         noise_uv_data = args.noise_data if args.noise_data is not None else args.noise_uv
+
+        # Load the data-generation AE (with trained encoder) when
+        # --data_profile=VAE. Falls back to the model AE path/epoch if the
+        # data-specific args are not set. The encoder is needed, so make sure
+        # the path points to a non-distilled checkpoint.
+        data_ae = None
+        if args.data_profile == "VAE":
+            data_vae_path = args.data_vae_path if args.data_vae_path else args.vae_path
+            data_vae_epoch = args.data_vae_epoch if args.data_vae_epoch is not None else args.vae_epoch
+            assert data_vae_path is not None, "--data_vae_path or --vae_path required when --data_profile=VAE"
+            assert data_vae_epoch is not None, "--data_vae_epoch or --vae_epoch required when --data_profile=VAE"
+            print(f"Loading data-generation AE from {data_vae_path} epoch {data_vae_epoch}")
+            print(f"Loading data-generation AE from {data_vae_path} epoch {data_vae_epoch}", file=log_file)
+            data_ae = load_galaxy_autoencoder(Path(data_vae_path), epoch=data_vae_epoch)
+            data_ae = eqx.nn.inference_mode(data_ae, True)
+
         model_data_gen = partial(
             gen_gal_dataset,
             Ngal=args.Ngal,
             Npx=args.Npx,
             pixel_scale=args.pixel_scale,
+            pixel_scale_vae=args.pixel_scale_vae,
             uv_pos=uv_pos,
             noise_uv=noise_uv_data,
             TRECS_fit_dir=args.trecs_data_path,
@@ -481,7 +500,8 @@ def main():
             profile_type=args.data_profile,
             n=args.sersic_index,
             cosmos_seed=args.seed,
-            mag_cut=args.mag_cut
+            mag_cut=args.mag_cut,
+            ae=data_ae,
         )
         seeded_model_data_gen = seed(model_data_gen, key)
         data, data_params = seeded_model_data_gen()
