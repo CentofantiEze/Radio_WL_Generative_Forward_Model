@@ -122,6 +122,11 @@ def draw_HST_profiles(Ngal, dataset_dir, flux_batch, g1, g2, uv_pos, Npx, pixel_
         gal_type = 'real'
     for i, ind in enumerate(indices):
         gal_ = catalog.makeGalaxy(ind, gal_type=gal_type)
+        # DEBUG ONLY: recenter COSMOS galaxy to zero out sub-pixel centroid offset
+        # before shearing — tests whether the data-vs-model centroid mismatch is
+        # the source of the g2 bias on --data_profile real.
+        cen = gal_.centroid
+        gal_ = gal_.shift(-cen.x, -cen.y)
         gal_ = gal_.shear(g1=g1, g2=g2)
         # Convolve with gaussian to ensure finite support in Fourier space (for numerical stability)
         gal_ = gs.Convolve([gal_, gs.Gaussian(sigma=2*pixel_scale_hst)])
