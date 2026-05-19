@@ -1,6 +1,7 @@
 from functools import partial
 
 import galsim as gs
+from galsim.hsm import FindAdaptiveMom
 import h5py
 import jax
 import jax.numpy as jnp
@@ -122,11 +123,23 @@ def draw_HST_profiles(Ngal, dataset_dir, flux_batch, g1, g2, uv_pos, Npx, pixel_
         gal_type = 'real'
     for i, ind in enumerate(indices):
         gal_ = catalog.makeGalaxy(ind, gal_type=gal_type)
-        # DEBUG ONLY: recenter COSMOS galaxy to zero out sub-pixel centroid offset
-        # before shearing — tests whether the data-vs-model centroid mismatch is
-        # the source of the g2 bias on --data_profile real.
-        cen = gal_.centroid
-        gal_ = gal_.shift(-cen.x, -cen.y)
+        # DEBUG ONLY: recenter via HSM adaptive moments on the PSF-convolved
+        # image. gal_.centroid is noise-dominated for some COSMOS galaxies
+        # (deconvolution by RealGalaxy amplifies noise far from center and
+        # pulls the intensity-weighted moment off by arcsec); HSM uses
+        # Gaussian-weighted moments and stays sub-pixel.
+        try:
+            psf_ = gal_.original_psf
+            im_for_mom = gs.Convolve(gal_, psf_).drawImage(
+                nx=Npx, ny=Npx, scale=pixel_scale_hst, method='no_pixel'
+            )
+            moms = FindAdaptiveMom(im_for_mom)
+            center_galsim = (Npx + 1) / 2  # galsim 1-indexed true center
+            dx = (moms.moments_centroid.x - center_galsim) * pixel_scale_hst
+            dy = (moms.moments_centroid.y - center_galsim) * pixel_scale_hst
+            gal_ = gal_.shift(-dx, -dy)
+        except gs.errors.GalSimHSMError:
+            pass  # HSM failed to converge; leave galaxy uncentered
         gal_ = gal_.shear(g1=g1, g2=g2)
         # Convolve with gaussian to ensure finite support in Fourier space (for numerical stability)
         gal_ = gs.Convolve([gal_, gs.Gaussian(sigma=2*pixel_scale_hst)])
