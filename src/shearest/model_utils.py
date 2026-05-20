@@ -561,7 +561,8 @@ def model_fn_VAE_flow(
         / g_sigma
     )
     g = jnp.repeat(jnp.stack([g1, g2], 0), Ngal, -1)
-    g = to_unit_disk(g)
+    # DEBUG: do not apply shear clipping.
+    # g = to_unit_disk(g)
 
     # flux
     # DEBUG : no_flux
