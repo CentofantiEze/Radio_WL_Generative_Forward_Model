@@ -866,11 +866,19 @@ def main():
                     (losses,) = scan_out
                 return params, losses
 
+        t_map_start = datetime.now()
         map_results = jax.vmap(find_map)(map_init_val)
         if has_shear:
             init_val, map_losses, map_g1_trace, map_g2_trace = map_results
+            # Block until MAP is complete so the timing reflects actual GPU work
+            init_val["g1"].block_until_ready()
         else:
             init_val, map_losses = map_results
+            map_losses.block_until_ready()
+        t_map_end = datetime.now()
+        map_elapsed = t_map_end - t_map_start
+        print(f"MAP elapsed: {map_elapsed}  ({args.n_steps_map_freeze_shear + args.n_steps_map} steps × {args.num_chains} chains)")
+        print(f"MAP elapsed: {map_elapsed}  ({args.n_steps_map_freeze_shear + args.n_steps_map} steps × {args.num_chains} chains)", file=log_file)
 
         # Print MAP diagnostics
         if has_shear:
