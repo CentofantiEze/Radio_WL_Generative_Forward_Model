@@ -383,6 +383,10 @@ def main():
         args = Namespace(**args_dict)
         args.id = id_
         args.output_dir = out_dir_
+    
+    # Save the arguments
+    with open(os.path.join(out_dir, "args.json"), "w") as f:
+        json.dump(vars(args), f, indent=4)
 
     fov_size = args.Npx * args.pixel_scale / 3600  # in degrees
 
@@ -1840,10 +1844,6 @@ def main():
     print("Arguments:", file=log_file)
     for key, value in vars(args).items():
         print(f"  {key}: {value}", file=log_file)
-
-    # Save the arguments
-    with open(os.path.join(out_dir, "args.json"), "w") as f:
-        json.dump(vars(args), f, indent=4)
 
     # Save log file
     t_end = datetime.now()
