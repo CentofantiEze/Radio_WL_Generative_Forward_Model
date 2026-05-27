@@ -383,10 +383,6 @@ def main():
         args = Namespace(**args_dict)
         args.id = id_
         args.output_dir = out_dir_
-    
-    # Save the arguments
-    with open(os.path.join(out_dir, "args.json"), "w") as f:
-        json.dump(vars(args), f, indent=4)
 
     fov_size = args.Npx * args.pixel_scale / 3600  # in degrees
 
@@ -400,6 +396,10 @@ def main():
     log_file = open(os.path.join(out_dir, "radio_sampling.log"), "w")
     t_start = datetime.now()
     print(f"Start: {t_start.strftime('%Y-%m-%d %H:%M:%S')}", file=log_file)
+
+    # Save the arguments
+    with open(os.path.join(out_dir, "args.json"), "w") as f:
+        json.dump(vars(args), f, indent=4)
 
     # print parameters to log file
     print(f"Ngal: {args.Ngal}", file=log_file)
