@@ -298,6 +298,7 @@ def main():
     )
     parser.add_argument("--n_steps_map_freeze_shear", type=int, default=0, help="Initial MAP steps with g1,g2 frozen (optimize only u/flux, 0=disabled)")
     parser.add_argument("--g_chains_init", type=float, nargs=2, default=None, metavar=("G1", "G2"), help="Initialize all chains at this (g1, g2) in physical units. Converted to MCMC space via g_prior_sigma/g_prior_scale.")
+    parser.add_argument("--u_chains_init", type=float, default=None, help="Override the prior draw of u (flow base latent). If None (default), keep the prior sample. If a number, draw u from N(0, sigma^2) per chain/galaxy/element. Use 0.0 for u=0 exactly.")
     parser.add_argument("--point_estimate", action="store_true", default=False, help="Stop after MAP: save g1,g2 estimates and exit (no MCMC)")
     # DEBUG ONLY — remove this flag once z mixing is validated
     parser.add_argument("--no_shear", action="store_true", default=False, help="[DEBUG] Disable shear (g1=g2=0) to test z/flux sampling in isolation")
@@ -745,6 +746,17 @@ def main():
                      "g1": jnp.full_like(init_val_["g1"], g1_mcmc),
                      "g2": jnp.full_like(init_val_["g2"], g2_mcmc)}
         print(f"g_chains_init: g1={g1_init}, g2={g2_init} (physical) -> g1={g1_mcmc:.4f}, g2={g2_mcmc:.4f} (MCMC space)")
+
+    # Override the prior draw of u (flow base latent) with N(0, sigma^2). When
+    # sigma=0, u collapses to zeros. Useful for testing how much of the MAP
+    # outcome is driven by the initial u vs by the data.
+    if args.u_chains_init is not None and "u" in init_val_:
+        key, ukey = jax.random.split(key)
+        u_shape = init_val_["u"].shape
+        init_val_ = {**init_val_,
+                     "u": args.u_chains_init * jax.random.normal(ukey, u_shape, dtype=init_val_["u"].dtype)}
+        print(f"u_chains_init: u ~ N(0, {args.u_chains_init}^2) (shape {u_shape})")
+        print(f"u_chains_init: u ~ N(0, {args.u_chains_init}^2) (shape {u_shape})", file=log_file)
 
     if args.save_data:
         np.save(os.path.join(out_dir, "radio_init_val.npy"), init_val_, allow_pickle=True)
