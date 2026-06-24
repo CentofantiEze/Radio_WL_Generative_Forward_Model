@@ -201,12 +201,12 @@ def draw_AE_HST_profiles(Ngal, dataset_dir, ae, g1, g2, uv_pos, Npx,
     _, g_dec, z_enc = jax.vmap(ae)(obs_arr, psf_arr)
     g_dec_np = np.array(g_dec)  # (Ngal, 1, Npx, Npx)
 
-    # Render via regular galsim, matching draw_HST_profiles
+    # Render via JAX-galsim, matching draw_HST_profiles
     im_gal = []
     for i in range(Ngal):
-        gal_ = gs.InterpolatedImage(gs.Image(g_dec_np[i, 0], scale=pixel_scale_vae))
+        gal_ = galsim.InterpolatedImage(galsim.Image(g_dec_np[i, 0], scale=pixel_scale_vae))
         gal_ = gal_.shear(g1=g1, g2=g2)
-        gal_ = gs.Convolve([gal_, gs.Gaussian(sigma=2 * pixel_scale_vae)])
+        gal_ = galsim.Convolve([gal_, galsim.Gaussian(sigma=2 * pixel_scale_vae)])
         gal_kimage_ = gal_.drawKImage(
             nx=Npx, ny=Npx, scale=2 * np.pi / pixel_scale_vae / Npx
         ).array
