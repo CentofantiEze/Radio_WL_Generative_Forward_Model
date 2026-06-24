@@ -143,13 +143,10 @@ def draw_HST_profiles(Ngal, dataset_dir, flux_batch, g1, g2, uv_pos, Npx, pixel_
         gal_ = gal_.shear(g1=g1, g2=g2)
         # Convolve with gaussian to ensure finite support in Fourier space (for numerical stability)
         gal_ = gs.Convolve([gal_, gs.Gaussian(sigma=2*pixel_scale_hst)])
-        # # DEBUG : HST psf
-        # psf = gal_.original_psf
-        # gal_ =  gs.Convolve([gal_, psf])
-        # DEBUG : no_flux
-        # gal_ = gal_.withFlux(flux_batch[i])
+        
         gal_kimage_ = gal_.drawKImage(nx=Npx, ny=Npx, scale=2*np.pi/pixel_scale_hst/Npx).array
-        # DEBUG : Rescale images by sqrt(# pixels) = Npx
+        
+        # Rescale images by sqrt(# pixels) = Npx
         gal_kimage_ = gal_kimage_ / Npx
         vis = gal_kimage_[uv_pos]
         im_gal.append(complex_2_stack(vis))
@@ -238,10 +235,6 @@ def draw_NN_profile(z, flux, g1, g2, key, uv_pos, Npx, pixel_scale_vae=0.03, jit
     # Apply shear
     y_gs = y_gs.shear(g1=g1, g2=g2)
 
-    # DEBUG : no_flux
-    # Set flux
-    # y_gs = y_gs.withFlux(flux)
-
     # Apply PSF convolution
     y_gs = galsim.Convolve([y_gs, galsim.Gaussian(sigma=2*pixel_scale_vae)])
     
@@ -251,7 +244,7 @@ def draw_NN_profile(z, flux, g1, g2, key, uv_pos, Npx, pixel_scale_vae=0.03, jit
     # Get array
     y_kimage_array = y_kimage.array
 
-    # DEBUG : Rescale images by sqrt(# pixels) = Npx
+    # Rescale images by sqrt(# pixels) = Npx
     y_kimage_array = y_kimage_array / Npx
     
     # Sample visibilities
@@ -392,8 +385,6 @@ def gen_gal_dataset(
         im_gal, indices = draw_HST_profiles(
             Ngal=Ngal,
             dataset_dir=cosmos_dataset_dir,
-            # DEBUG : no_flux
-            # flux_batch=flux_batch,
             flux_batch=None,
             g1=g1,
             g2=g2,
@@ -407,8 +398,6 @@ def gen_gal_dataset(
         data_params = {
             "profile_type": profile_type,
             "indices": indices,
-            # DEBUG : no_flux
-            # "flux": flux_batch,
             "g1": g1,
             "g2": g2,
         }

@@ -412,7 +412,7 @@ def model_fn_VAE_noshear(
     return numpyro.sample("obs", dist.Normal(im_gal, noise_uv), obs=obs)
 
 
-# DEBUG ONLY — remove once z mixing is validated
+# DEBUG ONLY
 def model_fn_VAE_flow_noshear(
     Ngal=None,
     Npx=None,
@@ -448,11 +448,8 @@ def model_fn_VAE_flow_noshear(
     # No shear — g1=g2=0
     g = jnp.zeros((2, Ngal))
 
-    # flux
-    # DEBUG : no_flux
+    # Flux is not used for the VAE
     flux = None
-    # flux_z = numpyro.sample("flux", dist.Normal(jnp.zeros((Ngal,)), flux_sigma * jnp.ones((Ngal,))))
-    # flux = flux_min + jax.nn.sigmoid(flux_z / flux_sigma) * (flux_max - flux_min)
 
     if use_dropout:
         key = numpyro.prng_key()
@@ -561,14 +558,10 @@ def model_fn_VAE_flow(
         / g_sigma
     )
     g = jnp.repeat(jnp.stack([g1, g2], 0), Ngal, -1)
-    # DEBUG: do not apply shear clipping.
-    # g = to_unit_disk(g)
+    #
 
-    # flux
-    # DEBUG : no_flux
+    # Flux is not used for the VAE
     flux = None
-    # flux_z = numpyro.sample("flux", dist.Normal(jnp.zeros((Ngal,)), flux_sigma * jnp.ones((Ngal,))))
-    # flux = flux_min + jax.nn.sigmoid(flux_z / flux_sigma) * (flux_max - flux_min)
 
     if use_dropout:
         key = numpyro.prng_key()
