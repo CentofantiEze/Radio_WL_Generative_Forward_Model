@@ -11,7 +11,7 @@ Two forward models are supported:
 1. **Parametric** — Spergel / Exponential / composite (bulge + disk) profiles with per-galaxy `(e₁, e₂, h_l_r, flux, ν)` priors. No machine learning involved.
 2. **AE + Flow generative** — galaxies are represented by latent codes `u ∼ 𝒩(0, I)`, transformed through an **unconditional normalising flow** to a learned VAE latent `z`, then decoded by a pretrained **galaxy autoencoder**. Trained on COSMOS stamps so the prior matches the morphological distribution of real galaxies.
 
-The AE encoder/decoder and the latent-space normalising flow live in the companion repository [**pshear** (`probabilistic-shear`)](https://github.com/CentofantiEze/probabilistic-shear) — clone and install that one first.
+The AE encoder/decoder and the latent-space normalising flow live in the companion repository [**pshear** (`probabilistic-shear`)](https://github.com/b-remy/probabilistic-shear) — clone and install that one first.
 
 ## Main results
 
@@ -78,4 +78,4 @@ The whole pipeline runs end-to-end in ~50 min on a V100 for 100 galaxies with th
 
 ---
 
-⚠️ This repository is under active development — interfaces and result paths may change.
+⚠️ This repository is under active development
