@@ -310,6 +310,13 @@ def main():
         help="VAE decoder weight precision. float16 gives ~2x speedup on V100 GPU.",
     )
     parser.add_argument(
+        "--pixel_scale_vae",
+        type=float,
+        default=0.03,
+        help="Pixel scale for VAE images, default: HST pixel scale (0.03 arcsec/pixel).",
+    )
+    # Normalizing flow parameters
+    parser.add_argument(
         "--use_flow",
         action="store_true",
         help="Enable normalizing flow reparameterization of VAE latent space.",
@@ -327,10 +334,11 @@ def main():
         help="Epoch of the trained flow model checkpoint.",
     )
     parser.add_argument(
-        "--pixel_scale_vae",
+        "--flow_condition",
         type=float,
-        default=0.03,
-        help="Pixel scale for VAE images, default: HST pixel scale (0.03 arcsec/pixel).",
+        nargs="+",
+        default=None,
+        help="Conditioning vector for the flow model (if applicable).",
     )
 
     # MAP initialisation parameters
