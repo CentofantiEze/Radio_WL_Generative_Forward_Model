@@ -11,6 +11,8 @@ import numpy as np
 
 def compute_radio_uv_mask(
     n_antenna=50,
+    lat=35 / 180 * np.pi,
+    dec=0 / 180 * np.pi,
     E_lim=50e3,
     N_lim=50e3,
     Npx=128,
@@ -37,7 +39,7 @@ def compute_radio_uv_mask(
 
     b_enu = argosim.antenna_utils.get_baselines(antenna)
     track, _ = argosim.antenna_utils.uv_track_multiband(
-        b_ENU=b_enu, track_time=track_time, t_0=t_0, n_times=n_times, f=f, df=df, n_freqs=n_freqs
+        b_ENU=b_enu, lat=lat, dec=dec, track_time=track_time, t_0=t_0, n_times=n_times, f=f, df=df, n_freqs=n_freqs
     )
     mask, _ = argosim.imaging_utils.grid_uv_samples(
         track, sky_uv_shape=(Npx, Npx), fov_size=(fov_size, fov_size), mask_type=uv_mask_weighting

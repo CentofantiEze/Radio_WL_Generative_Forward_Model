@@ -1,4 +1,5 @@
 import warnings
+from datetime import datetime
 from functools import partial
 from pathlib import Path
 
@@ -13,7 +14,8 @@ import optax
 import equinox as eqx
 import blackjax.adaptation.mclmc_adaptation as mclmc_adj
 from einops import rearrange
-from numpyro.handlers import condition, seed, trace
+from jax.flatten_util import ravel_pytree
+from numpyro.handlers import seed, trace
 
 warnings.filterwarnings("ignore")
 
@@ -33,11 +35,81 @@ import corner
 
 from src.shearest.data_gen_utils import gen_gal_dataset
 from src.shearest.func_utils import stack_2_complex, to_unit_disk
-from src.shearest.model_utils import model_fn, model_fn_VAE
+from src.shearest.model_utils import model_fn, model_fn_VAE, model_fn_VAE_noshear, model_fn_VAE_flow, model_fn_VAE_flow_noshear, model_fn_composite
 from src.shearest.psf_utils import compute_radio_uv_mask
 from src.shearest.posterior_utils import fit_gmm, save_gmm, plot_gmm_contours
 
 from pshear.utils import load_galaxy_autoencoder # type: ignore
+from pshear.nn.flow import make_latent_flow # type: ignore
+from pshear.utils import load_flow # type: ignore
+import yaml
+
+
+def load_flow_legacy(model_path, epoch):
+    """Load flow saved with old flowjax/equinox (sequential numpy format).
+
+    Handles version mismatches between flowjax 13 (checkpoint) and newer
+    versions by skipping extra wrapper leaves (shape/cond_shape) that were
+    added in later flowjax versions.
+    """
+    with open(model_path / 'config.yaml', 'r') as f:
+        config = yaml.load(f, Loader=yaml.FullLoader)
+
+    # Create model skeleton
+    flow = make_latent_flow(key=jax.random.key(0), **config)
+
+    # Read checkpoint arrays
+    checkpoint_path = model_path / f'model_checkpoint_{epoch}.eqx'
+    arrays = []
+    with open(checkpoint_path, 'rb') as f:
+        while True:
+            try:
+                arrays.append(np.load(f, allow_pickle=False))
+            except Exception:
+                break
+
+    # Map arrays to leaves, skipping functions and _dummy
+    leaves, treedef = jax.tree_util.tree_flatten(flow)
+    flat = jax.tree_util.tree_leaves_with_path(flow)
+
+    serializable_indices = []
+    for i, (p, leaf) in enumerate(flat):
+        if callable(leaf) and not isinstance(leaf, (jnp.ndarray, np.ndarray)):
+            continue
+        if '_dummy' in str(p):
+            continue
+        serializable_indices.append(i)
+
+    # If there are more skeleton leaves than checkpoint arrays, skip extra
+    # shape/cond_shape integer leaves added by newer flowjax versions.
+    if len(serializable_indices) > len(arrays):
+        filtered = []
+        for idx in serializable_indices:
+            path_str = str(flat[idx][0])
+            leaf = flat[idx][1]
+            # Skip shape/cond_shape wrapper leaves not present in old checkpoints
+            is_shape_leaf = ('shape' in path_str or 'cond_shape' in path_str)
+            is_wrapper_int = isinstance(leaf, int) and is_shape_leaf
+            if not is_wrapper_int:
+                filtered.append(idx)
+        serializable_indices = filtered
+
+    assert len(serializable_indices) == len(arrays), \
+        f'Leaf count mismatch: {len(serializable_indices)} vs {len(arrays)} arrays'
+
+    new_leaves = list(leaves)
+    for arr_idx, leaf_idx in enumerate(serializable_indices):
+        old_leaf = leaves[leaf_idx]
+        new_val = arrays[arr_idx]
+        if isinstance(old_leaf, int):
+            new_leaves[leaf_idx] = int(new_val.item())
+        elif isinstance(old_leaf, (jnp.ndarray, np.ndarray)):
+            new_leaves[leaf_idx] = jnp.array(new_val)
+        else:
+            new_leaves[leaf_idx] = new_val
+
+    return treedef.unflatten(new_leaves)
+
 
 # ### Simulation parameters
 # Ngal = 100
@@ -50,8 +122,8 @@ from pshear.utils import load_galaxy_autoencoder # type: ignore
 # g2_true = 0.05
 # ell_sigma = .5
 # ell_scale = .3
-# g_sigma = 1.0
-# g_scale = .3
+# g_prior_sigma = 1.0
+# g_prior_scale = .3
 # sersic_index = 1.
 
 # ### radio PSF parameters
@@ -101,7 +173,8 @@ def main():
     parser.add_argument(
         "--pixel_scale", type=float, default=0.15, help="Pixel scale in arcsec/pixel"
     )
-    parser.add_argument("--noise_uv", type=float, default=0.004, help="UV noise level")
+    parser.add_argument("--noise_uv", type=float, default=0.004, help="UV noise level for the model likelihood (and for data generation when --noise_data is not set)")
+    parser.add_argument("--noise_data", type=float, default=None, help="UV noise level for data generation. If None, uses --noise_uv (backwards-compatible).")
     parser.add_argument(
         "--trecs_data_path",
         type=str,
@@ -127,6 +200,9 @@ def main():
         help="COSMOS dataset sample to use: 23.5 or 25.2",
     )
     parser.add_argument(
+        "--mag_cut", type=float, default=None, help="Optional magnitude cut for COSMOS sample"
+    )
+    parser.add_argument(
         "--data_profile", type=str, default="exp", help="Galaxy dataset profile type: exp, sersic, spergel or real"
     )
     parser.add_argument(
@@ -136,13 +212,8 @@ def main():
         "--g2_true", type=float, default=0.05, help="True g2 shear value"
     )
     parser.add_argument(
-        "--ell_sigma", type=float, default=1.0, help="Ellipticity prior sigma"
+        "--ell_scale", type=float, default=0.2, help="Ellipticity scale for data generation"
     )
-    parser.add_argument(
-        "--ell_scale", type=float, default=0.2, help="Ellipticity prior scale"
-    )
-    parser.add_argument("--g_sigma", type=float, default=1.0, help="Shear prior sigma")
-    parser.add_argument("--g_scale", type=float, default=0.1, help="Shear prior scale")
     parser.add_argument("--sersic_index", type=float, default=None, help="Sersic index")
     parser.add_argument("--antenna_type", type=str, default="random", help="Antenna type: random or file")
     parser.add_argument("--antenna_file", type=str, default=None, help="Path to antenna file if antenna_type is file")
@@ -154,7 +225,9 @@ def main():
     parser.add_argument("--t0", type=float, default=0, help="Start time")
     parser.add_argument("--n_times", type=int, default=4, help="Number of times")
     parser.add_argument("--f", type=float, default=1.4e9, help="Frequency")
-    parser.add_argument("--df", type=float, default=1e8, help="Frequency bandwidth")
+    parser.add_argument("--df", type=float, default=None, help="Frequency bandwidth")
+    parser.add_argument("--array_lat", type=float, default=-30, help="Latitude of the array in degrees (used for UV mask generation)")
+    parser.add_argument("--array_dec", type=float, default=-30, help="Declination of the target field in degrees (used for UV mask generation)")
     parser.add_argument(
         "--n_freqs", type=int, default=1, help="Number of frequency channels"
     )
@@ -198,18 +271,45 @@ def main():
     parser.add_argument(
         "--flux_prior_max", type=float, default=0.25, help="Flux prior max"
     )
+    parser.add_argument(
+        "--composite_flux_ratio_max", type=float, default=4.0, help="Max disk/bulge flux ratio for composite model"
+    )
     parser.add_argument("--latent_dim", type=int, default=4, help="Latent dimension for VAE, z.shape -> (latent_dim, latent_dim).")
     parser.add_argument("--latent_mean", type=float, default=0., help="Latent representation mean value.")
+    parser.add_argument("--latent_sigma", type=float, default=1.0, help="Latent space sampling sigma (rescaled back to physical scale).")
     parser.add_argument("--vae_path", type=str, default=None, help="Path to the trained VAE model.")
     parser.add_argument("--vae_epoch", type=int, default=None, help="Epoch of the trained VAE model.")
+    parser.add_argument("--data_vae_path", type=str, default=None, help="Path to a (full, non-distilled) AE for data generation when --data_profile=VAE. Falls back to --vae_path if not set. Must have a trained encoder.")
+    parser.add_argument("--data_vae_epoch", type=int, default=None, help="Epoch of the data-generation AE. Falls back to --vae_epoch if not set.")
     parser.add_argument("--vae_model_inference_mode", type=str, default="parallel", help="VAE model inference mode: parallel, sequential or batch.")
     parser.add_argument("--vae_inference_batch_size", type=int, default=1, help="VAE inference batch size if using batch mode.")
+    parser.add_argument("--use_dropout", action="store_true", help="Enable VAE dropout during inference (disabled by default for deterministic decoding).")
+    parser.add_argument("--vae_precision", type=str, default="float16", choices=["float32", "float16"], help="VAE decoder weight precision. float16 gives ~2x speedup on V100 GPU.")
+    parser.add_argument("--use_flow", action="store_true", help="Enable normalizing flow reparameterization of VAE latent space.")
+    parser.add_argument("--flow_path", type=str, default=None, help="Path to the trained flow model directory.")
+    parser.add_argument("--flow_epoch", type=int, default=None, help="Epoch of the trained flow model checkpoint.")
+    parser.add_argument("--flow_condition", type=float, nargs=3, default=[21.69, 15.90, 0.60], help="Fixed conditioning values [mag_auto, flux_radius, zphot] for the flow.")
     parser.add_argument("--pixel_scale_vae", type=float, default=0.03, help="Pixel scale for VAE images, default: HST pixel scale (0.03 arcsec/pixel).")
     parser.add_argument("--lr_map", type=float, default=1e-2, help="MAP learning rate")
+    parser.add_argument("--lr_map_shear_factor", type=float, default=1.0, help="Multiplier for g1,g2 learning rate relative to lr_map")
+    parser.add_argument("--map_optimizer", type=str, default="adam", choices=["adam", "adafactor"], help="Optimizer for MAP estimation")
     parser.add_argument(
         "--n_steps_map", type=int, default=5000, help="Number of steps for MAP"
     )
-    parser.add_argument("--sampler", type=str, default="ghmc", help="Sampler to use: ghmc or mclmc")
+    parser.add_argument("--n_steps_map_freeze_shear", type=int, default=0, help="Initial MAP steps with g1,g2 frozen (optimize only u/flux, 0=disabled)")
+    parser.add_argument("--g_chains_init", type=float, nargs=2, default=None, metavar=("G1", "G2"), help="Initialize all chains at this (g1, g2) in physical units. Converted to MCMC space via g_prior_sigma/g_prior_scale.")
+    parser.add_argument("--u_chains_init", type=float, default=None, help="Override the prior draw of u (flow base latent). If None (default), keep the prior sample. If a number, draw u from N(0, sigma^2) per chain/galaxy/element. Use 0.0 for u=0 exactly.")
+    parser.add_argument("--point_estimate", action="store_true", default=False, help="Stop after MAP: save g1,g2 estimates and exit (no MCMC)")
+    # DEBUG ONLY — remove this flag once z mixing is validated
+    parser.add_argument("--no_shear", action="store_true", default=False, help="[DEBUG] Disable shear (g1=g2=0) to test z/flux sampling in isolation")
+    parser.add_argument("--sampler", type=str, default="ghmc", choices=["ghmc", "mclmc", "gibbs"],
+                        help="Sampler to use: ghmc, mclmc, or gibbs (Gibbs block sampler)")
+    parser.add_argument("--n_gibbs_g_steps", type=int, default=10,
+                        help="MCLMC steps per Gibbs g-block iteration")
+    parser.add_argument("--n_gibbs_z_steps", type=int, default=50,
+                        help="MCLMC steps per Gibbs z-block iteration")
+    parser.add_argument("--n_warmup_g", type=int, default=5000,
+                        help="Warmup steps for g-block MCLMC adaptation (2D, much shorter than z-block)")
     parser.add_argument(
         "--n_warmup", type=int, default=5000, help="Number of warmup steps for MEADS"
     )
@@ -218,6 +318,21 @@ def main():
     )
     parser.add_argument(
         "--step_size", type=float, default=None, help="Step size for HMC"
+    )
+    parser.add_argument(
+        "--mclmc_L", type=float, default=None, help="MCLMC trajectory length L. If both --mclmc_L and --step_size are set, skips adaptation entirely."
+    )
+    parser.add_argument(
+        "--mclmc_inv_mass_shear", type=float, default=None,
+        help="Diagonal inverse mass matrix value for g1/g2 in MCLMC (all other params use 1.0). "
+             "Set to the expected posterior variance of g1/g2 in MCMC sampling space, "
+             "e.g. g_scale/sqrt(Ngal). "
+             "Default None uses a scalar mass matrix (all params equal)."
+    )
+    parser.add_argument(
+        "--mclmc_inv_mass_file", type=str, default=None,
+        help="Path to .npy file with diagonal inverse mass matrix for MCLMC. "
+             "Overrides --mclmc_inv_mass_shear. Use with --mclmc_L and --step_size to skip adaptation."
     )
     parser.add_argument(
         "--num", type=int, default=20, help="Number of batch iterations"
@@ -233,6 +348,9 @@ def main():
     )
     parser.add_argument(
         "--save_data", action="store_true", default=False, help="Save intermediate data (radio_data.npy, radio_psf_mask.npy, radio_init_val.npy, radio_map_val.npy)"
+    )
+    parser.add_argument(
+        "--precomputed_map", action="store_true", default=False, help="Load MAP values from output dir instead of re-running MAP"
     )
     parser.add_argument(
         "--seed",
@@ -277,17 +395,24 @@ def main():
 
     # create log file
     log_file = open(os.path.join(out_dir, "radio_sampling.log"), "w")
+    t_start = datetime.now()
+    print(f"Start: {t_start.strftime('%Y-%m-%d %H:%M:%S')}", file=log_file)
+
+    # Save the arguments
+    with open(os.path.join(out_dir, "args.json"), "w") as f:
+        json.dump(vars(args), f, indent=4)
 
     # print parameters to log file
     print(f"Ngal: {args.Ngal}", file=log_file)
     print(f"Npx: {args.Npx}", file=log_file)
     print(f"pixel_scale: {args.pixel_scale}", file=log_file)
     print(f"fov_size: {fov_size}", file=log_file)
-    print(f"noise_uv: {args.noise_uv}", file=log_file)
+    print(f"noise_uv (model): {args.noise_uv}", file=log_file)
+    print(f"noise_data: {args.noise_data if args.noise_data is not None else f'{args.noise_uv} (fallback to noise_uv)'}", file=log_file)
     print(f"g1_true: {args.g1_true}", file=log_file)
     print(f"g2_true: {args.g2_true}", file=log_file)
-    print(f"Ellipticity prior scale: {args.ell_scale}", file=log_file)
-    print(f"Shear prior scale: {args.g_scale}", file=log_file)
+    print(f"Ellipticity scale (data gen): {args.ell_scale}", file=log_file)
+    print(f"Shear prior scale: {args.g_prior_scale}", file=log_file)
 
     # Compute the radio PSF
     uv_pos, mask, psf = compute_radio_uv_mask(
@@ -301,6 +426,8 @@ def main():
         n_times=args.n_times,
         f=args.f,
         df=args.df,
+        lat=args.array_lat*np.pi/180,
+        dec=args.array_dec*np.pi/180,
         n_freqs=args.n_freqs,
         seed=args.radio_array_seed,
         antenna=args.antenna_type,
@@ -335,40 +462,60 @@ def main():
     print(f"Random seed: {args.seed}", file=log_file)
     key = jax.random.PRNGKey(args.seed)
 
-    # Generate observations
-    model_data_gen = partial(
-        gen_gal_dataset,
-        Ngal=args.Ngal,
-        Npx=args.Npx,
-        pixel_scale=args.pixel_scale,
-        uv_pos=uv_pos,
-        noise_uv=args.noise_uv,
-        TRECS_fit_dir=args.trecs_data_path,
-        deepshape_dataset_dir=args.deepshape_data_path,
-        cosmos_dataset_dir=args.cosmos_data_path,
-        cosmos_sample=args.cosmos_sample,
-        ell_scale=args.ell_scale,
-        g1=args.g1_true,
-        g2=args.g2_true,
-        profile_type=args.data_profile,
-        n=args.sersic_index,
-    )
-    seeded_model_data_gen = seed(model_data_gen, key)
-    # Conditioning model to generate observation with [g1, g2]
-    # conditionned_model = condition(
-    #     seeded_model_data_gen,
-    #     {
-    #         "g1": args.g1_true * jnp.ones((1,)) / (args.g_scale / args.g_sigma),
-    #         "g2": args.g2_true * jnp.ones((1,)) / (args.g_scale / args.g_sigma),
-    #     },
-    # )
-    data, data_params = seeded_model_data_gen()
+    # Generate or load observations
+    data_file = os.path.join(out_dir, "radio_data.npy")
+    if args.precomputed_map and os.path.exists(data_file):
+        print(f"Loading precomputed data from {data_file}")
+        print(f"Loading precomputed data from {data_file}", file=log_file)
+        data = jnp.array(np.load(data_file))
+        data_params = np.load(os.path.join(out_dir, "radio_data_params.npy"), allow_pickle=True)[()]
+    else:
+        noise_uv_data = args.noise_data if args.noise_data is not None else args.noise_uv
 
-    # Save the data
-    if args.save_data:
-        np.save(os.path.join(out_dir, "radio_data.npy"), data)
-        np.save(os.path.join(out_dir, "radio_data_params.npy"), data_params)
-        np.save(os.path.join(out_dir, "radio_psf_mask.npy"), mask)
+        # Load the data-generation AE (with trained encoder) when
+        # --data_profile=VAE. Falls back to the model AE path/epoch if the
+        # data-specific args are not set. The encoder is needed, so make sure
+        # the path points to a non-distilled checkpoint.
+        data_ae = None
+        if args.data_profile == "VAE":
+            data_vae_path = args.data_vae_path if args.data_vae_path else args.vae_path
+            data_vae_epoch = args.data_vae_epoch if args.data_vae_epoch is not None else args.vae_epoch
+            assert data_vae_path is not None, "--data_vae_path or --vae_path required when --data_profile=VAE"
+            assert data_vae_epoch is not None, "--data_vae_epoch or --vae_epoch required when --data_profile=VAE"
+            print(f"Loading data-generation AE from {data_vae_path} epoch {data_vae_epoch}")
+            print(f"Loading data-generation AE from {data_vae_path} epoch {data_vae_epoch}", file=log_file)
+            data_ae = load_galaxy_autoencoder(Path(data_vae_path), epoch=data_vae_epoch)
+            data_ae = eqx.nn.inference_mode(data_ae, True)
+
+        model_data_gen = partial(
+            gen_gal_dataset,
+            Ngal=args.Ngal,
+            Npx=args.Npx,
+            pixel_scale=args.pixel_scale,
+            pixel_scale_vae=args.pixel_scale_vae,
+            uv_pos=uv_pos,
+            noise_uv=noise_uv_data,
+            TRECS_fit_dir=args.trecs_data_path,
+            deepshape_dataset_dir=args.deepshape_data_path,
+            cosmos_dataset_dir=args.cosmos_data_path,
+            cosmos_sample=args.cosmos_sample,
+            ell_scale=args.ell_scale,
+            g1=args.g1_true,
+            g2=args.g2_true,
+            profile_type=args.data_profile,
+            n=args.sersic_index,
+            cosmos_seed=args.seed,
+            mag_cut=args.mag_cut,
+            ae=data_ae,
+        )
+        seeded_model_data_gen = seed(model_data_gen, key)
+        data, data_params = seeded_model_data_gen()
+
+        # Save the data
+        if args.save_data:
+            np.save(os.path.join(out_dir, "radio_data.npy"), data)
+            np.save(os.path.join(out_dir, "radio_data_params.npy"), data_params)
+            np.save(os.path.join(out_dir, "radio_psf_mask.npy"), mask)
 
     key, subkey = jax.random.split(key)
 
@@ -377,37 +524,153 @@ def main():
         # load autoencoder
         VAE_PATH = Path(args.vae_path)
         ae = load_galaxy_autoencoder(VAE_PATH, epoch=args.vae_epoch)
-        # JIT the decode method to accelerate VAE inference
+        # Start in float32 for MAP stability; convert to float16 for MCMC later
         jitted_decode = eqx.filter_jit(lambda z, key: ae.decode(z, key=key))
-        # 
+        #
         gsparams = galsim.GSParams(
             minimum_fft_size=128,
             folding_threshold=5e-3,
             maxk_threshold=1e-3,
 )
+        # Load normalizing flow if requested
+        flow_forward = None
+        flow_condition = None
+        if args.use_flow:
+            assert args.flow_path is not None, "--flow_path required when --use_flow is set"
+            assert args.flow_epoch is not None, "--flow_epoch required when --use_flow is set"
+            flow = load_flow(Path(args.flow_path), epoch=args.flow_epoch)
+            # The flow's base_dist may have learned loc/scale parameters during
+            # training, so we must apply base_dist.bijection (Affine) before the
+            # main bijection to match what flow.sample() does internally.
+            base_bij = flow.flow.base_dist.bijection
+            if flow.cond_dim > 0:
+                flow_forward = eqx.filter_jit(lambda u, c: flow.flow.bijection.transform(base_bij.transform(u), c))
+                flow_condition = jnp.array(args.flow_condition)
+            else:
+                flow_forward = eqx.filter_jit(lambda u: flow.flow.bijection.transform(base_bij.transform(u)))
+                flow_condition = None
+            print(f"Loaded flow from {args.flow_path} epoch {args.flow_epoch}")
+            print(f"Flow condition: {flow_condition}")
+            print(f"Loaded flow from {args.flow_path} epoch {args.flow_epoch}", file=log_file)
+            print(f"Flow condition: {flow_condition}", file=log_file)
+
         # Initialize the forward model
+        # DEBUG ONLY — --no_shear uses noshear model variants to test z/u/flux sampling; remove later
+        if args.no_shear and args.use_flow:
+            print("WARNING: --no_shear is set with flow, g1=g2=0, sampling u (debug mode)")
+            print("WARNING: --no_shear is set with flow, g1=g2=0, sampling u (debug mode)", file=log_file)
+            model = partial(
+                model_fn_VAE_flow_noshear,
+                Ngal=args.Ngal,
+                Npx=args.Npx,
+                pixel_scale_vae=args.pixel_scale_vae,
+                uv_pos=uv_pos,
+                noise_uv=args.noise_uv,
+                obs=data,
+                flux_sigma=args.flux_prior_sigma,
+                flux_max=args.flux_prior_max,
+                flux_min=args.flux_prior_min,
+                latent_dim=args.latent_dim,
+                latent_sigma=args.latent_sigma,
+                jitted_decode=jitted_decode,
+                gsparams=gsparams,
+                run_type=args.vae_model_inference_mode,
+                batch_size=args.vae_inference_batch_size,
+                use_dropout=args.use_dropout,
+                flow_forward=flow_forward,
+                flow_condition=flow_condition,
+            )
+        elif args.no_shear:
+            print("WARNING: --no_shear is set, g1=g2=0, sampling z (debug mode)")
+            print("WARNING: --no_shear is set, g1=g2=0, sampling z (debug mode)", file=log_file)
+            model = partial(
+                model_fn_VAE_noshear,
+                Ngal=args.Ngal,
+                Npx=args.Npx,
+                pixel_scale_vae=args.pixel_scale_vae,
+                uv_pos=uv_pos,
+                noise_uv=args.noise_uv,
+                obs=data,
+                flux_sigma=args.flux_prior_sigma,
+                flux_max=args.flux_prior_max,
+                flux_min=args.flux_prior_min,
+                latent_dim=args.latent_dim,
+                latent_mean=args.latent_mean,
+                latent_sigma=args.latent_sigma,
+                jitted_decode=jitted_decode,
+                gsparams=gsparams,
+                run_type=args.vae_model_inference_mode,
+                batch_size=args.vae_inference_batch_size,
+                use_dropout=args.use_dropout,
+            )
+        elif args.use_flow:
+            model = partial(
+                model_fn_VAE_flow,
+                Ngal=args.Ngal,
+                Npx=args.Npx,
+                pixel_scale_vae=args.pixel_scale_vae,
+                uv_pos=uv_pos,
+                noise_uv=args.noise_uv,
+                obs=data,
+                g_sigma=args.g_prior_sigma,
+                g_scale=args.g_prior_scale,
+                flux_sigma=args.flux_prior_sigma,
+                flux_max=args.flux_prior_max,
+                flux_min=args.flux_prior_min,
+                latent_dim=args.latent_dim,
+                latent_sigma=args.latent_sigma,
+                jitted_decode=jitted_decode,
+                gsparams=gsparams,
+                run_type=args.vae_model_inference_mode,
+                batch_size=args.vae_inference_batch_size,
+                use_dropout=args.use_dropout,
+                flow_forward=flow_forward,
+                flow_condition=flow_condition,
+            )
+        else:
+            model = partial(
+                model_fn_VAE,
+                Ngal=args.Ngal,
+                Npx=args.Npx,
+                pixel_scale_vae=args.pixel_scale_vae,
+                uv_pos=uv_pos,
+                noise_uv=args.noise_uv,
+                obs=data,
+                g_sigma=args.g_prior_sigma,
+                g_scale=args.g_prior_scale,
+                flux_sigma=args.flux_prior_sigma,
+                flux_max=args.flux_prior_max,
+                flux_min=args.flux_prior_min,
+                latent_dim=args.latent_dim,
+                latent_mean=args.latent_mean,
+                latent_sigma=args.latent_sigma,
+                jitted_decode=jitted_decode,
+                gsparams=gsparams,
+                run_type=args.vae_model_inference_mode,
+                batch_size=args.vae_inference_batch_size,
+                use_dropout=args.use_dropout,
+            )
+    elif args.model_profile == "composite":
         model = partial(
-        model_fn_VAE,
-        Ngal=args.Ngal,
-        Npx=args.Npx,
-        pixel_scale_radio=args.pixel_scale,
-        pixel_scale_vae=args.pixel_scale_vae,
-        uv_pos=uv_pos,
-        noise_uv=args.noise_uv,
-        obs=data,
-        g_sigma=args.g_prior_sigma,
-        g_scale=args.g_prior_scale,
-        flux_sigma=args.flux_prior_sigma,
-        flux_max=args.flux_prior_max,
-        flux_min=args.flux_prior_min,
-        latent_dim=args.latent_dim,
-        latent_mean=args.latent_mean,
-        jitted_decode=jitted_decode,
-        key=subkey,
-        gsparams=gsparams,
-        run_type=args.vae_model_inference_mode,
-        batch_size=args.vae_inference_batch_size
-    )
+            model_fn_composite,
+            Ngal=args.Ngal,
+            Npx=args.Npx,
+            pixel_scale=args.pixel_scale,
+            uv_pos=uv_pos,
+            noise_uv=args.noise_uv,
+            obs=data,
+            ell_sigma=args.ell_prior_sigma,
+            ell_scale=args.ell_prior_scale,
+            g_sigma=args.g_prior_sigma,
+            g_scale=args.g_prior_scale,
+            hlr_sigma=args.hlr_prior_sigma,
+            hlr_max=args.hlr_prior_max,
+            hlr_min=args.hlr_prior_min,
+            flux_sigma=args.flux_prior_sigma,
+            flux_max=args.flux_prior_max,
+            flux_min=args.flux_prior_min,
+            flux_ratio_max=args.composite_flux_ratio_max,
+        )
     else:
         model = partial(
             model_fn,
@@ -473,74 +736,262 @@ def main():
 
     keys = jax.random.split(key, args.num_chains)[: args.num_chains]
     init_val_ = jax.vmap(draw_params)(keys)
+
+    if args.g_chains_init is not None and "g1" in init_val_:
+        g1_init, g2_init = args.g_chains_init
+        # Convert from physical to MCMC space (inverse of g_rescale = g_prior_scale/g_prior_sigma)
+        g1_mcmc = g1_init * args.g_prior_sigma / args.g_prior_scale
+        g2_mcmc = g2_init * args.g_prior_sigma / args.g_prior_scale
+        init_val_ = {**init_val_,
+                     "g1": jnp.full_like(init_val_["g1"], g1_mcmc),
+                     "g2": jnp.full_like(init_val_["g2"], g2_mcmc)}
+        print(f"g_chains_init: g1={g1_init}, g2={g2_init} (physical) -> g1={g1_mcmc:.4f}, g2={g2_mcmc:.4f} (MCMC space)")
+
+    # Override the prior draw of u (flow base latent) with N(0, sigma^2). When
+    # sigma=0, u collapses to zeros. Useful for testing how much of the MAP
+    # outcome is driven by the initial u vs by the data.
+    if args.u_chains_init is not None and "u" in init_val_:
+        key, ukey = jax.random.split(key)
+        u_shape = init_val_["u"].shape
+        init_val_ = {**init_val_,
+                     "u": args.u_chains_init * jax.random.normal(ukey, u_shape, dtype=init_val_["u"].dtype)}
+        print(f"u_chains_init: u ~ N(0, {args.u_chains_init}^2) (shape {u_shape})")
+        print(f"u_chains_init: u ~ N(0, {args.u_chains_init}^2) (shape {u_shape})", file=log_file)
+
     if args.save_data:
         np.save(os.path.join(out_dir, "radio_init_val.npy"), init_val_, allow_pickle=True)
 
-    # Get the log prob of the joint distribution, conditioned on data
+    # Get the log prob of the joint distribution, conditioned on data.
+    # Seed the model with a fixed key so the log density is deterministic
+    # (required for gradient-based MCMC). This provides the PRNG context
+    # needed by numpyro.prng_key() inside model_fn_VAE.
+    seeded_model = seed(model, jax.random.PRNGKey(0))
+
     @jax.jit
     def log_prob_fn(params):
-        return numpyro.infer.util.log_density(
-            model,
-            (),
-            {
-                "obs": data,
-            },
-            params,
-        )[0]
+        @jax.checkpoint
+        def _log_density(params):
+            return numpyro.infer.util.log_density(
+                seeded_model,
+                (),
+                {
+                    "obs": data,
+                },
+                params,
+            )[0]
+        return _log_density(params)
 
-    print(f"MAP learning rate: {args.lr_map}", file=log_file)
+    print(f"MAP optimizer: {args.map_optimizer}, lr: {args.lr_map} (shear factor: {args.lr_map_shear_factor}x)", file=log_file)
     print(f"MAP number of steps: {args.n_steps_map}", file=log_file)
 
-    # find the MAP for chain initialization
+    map_init_val = init_val_
     nll = lambda params: -log_prob_fn(params)
 
-    def find_map(init_params):
-        start_learning_rate = args.lr_map
-        optimizer = optax.adafactor(start_learning_rate)
+    # find the MAP for chain initialization
+    has_shear = "g1" in map_init_val
+    g_rescale = args.g_prior_scale / args.g_prior_sigma
 
-        opt_state = optimizer.init(init_params)
+    # Try to load precomputed MAP values
+    map_file = os.path.join(out_dir, "radio_map_val.npy")
+    if args.precomputed_map and os.path.exists(map_file):
+        print(f"Loading precomputed MAP from {map_file}")
+        print(f"Loading precomputed MAP from {map_file}", file=log_file)
+        init_val = np.load(map_file, allow_pickle=True)[()]
+        # Convert to jax arrays
+        init_val = {k: jnp.array(v) for k, v in init_val.items()}
+        if has_shear:
+            print(f"Loaded MAP: g1={init_val['g1']*g_rescale}, g2={init_val['g2']*g_rescale}")
+            print(f"Loaded MAP: g1={init_val['g1']*g_rescale}, g2={init_val['g2']*g_rescale}", file=log_file)
+    elif args.precomputed_map:
+        print(f"WARNING: --precomputed_map set but {map_file} not found, running MAP")
+        print(f"WARNING: --precomputed_map set but {map_file} not found, running MAP", file=log_file)
+        args.precomputed_map = False
 
-        # A simple update loop.
-        def update_step(carry, xs):
-            params, opt_state = carry
-            grads = jax.grad(nll)(params)
-            updates, opt_state = optimizer.update(grads, opt_state, params)
-            params = optax.apply_updates(params, updates)
-            return (params, opt_state), 0.0
+    if not args.precomputed_map:
 
-        (params, _), _ = jax.lax.scan(
-            update_step, (init_params, opt_state), length=args.n_steps_map
-        )
+        def find_map(init_params):
+            param_labels = {k: 'shear' if k in ('g1', 'g2') else 'default' for k in init_params}
+            opt_fn = optax.adam if args.map_optimizer == "adam" else optax.adafactor
 
-        return params
-    
-    init_val = jax.vmap(find_map)(init_val_)
+            # Phase 0: optimize only u/flux with g1,g2 frozen
+            if has_shear and args.n_steps_map_freeze_shear > 0:
+                optimizer_freeze = optax.multi_transform(
+                    transforms={
+                        'shear': optax.set_to_zero(),
+                        'default': opt_fn(args.lr_map),
+                    },
+                    param_labels=param_labels,
+                )
+                opt_state_freeze = optimizer_freeze.init(init_params)
 
-    print(
-        init_val["g1"] * (args.g_scale / args.g_sigma),
-        init_val["g2"] * (args.g_scale / args.g_sigma),
-    )
-    print(
-        f"Initial guess: g1={init_val['g1']*(args.g_scale/args.g_sigma)}, g2={init_val['g2']*(args.g_scale/args.g_sigma)}",
-        file=log_file,
-    )
-    if args.save_data:
-        np.save(os.path.join(out_dir, "radio_map_val.npy"), init_val, allow_pickle=True)
+                def update_step_freeze(carry, xs):
+                    params, opt_state = carry
+                    loss, grads = jax.value_and_grad(nll)(params)
+                    updates, opt_state = optimizer_freeze.update(grads, opt_state, params)
+                    params = optax.apply_updates(params, updates)
+                    aux = (loss, params["g1"], params["g2"]) if has_shear else (loss,)
+                    return (params, opt_state), aux
 
-    if args.save_plots:
+                (init_params, _), scan_out_f = jax.lax.scan(
+                    update_step_freeze, (init_params, opt_state_freeze), length=args.n_steps_map_freeze_shear
+                )
+
+            # Phase 1: joint optimization of all parameters
+            if has_shear:
+                optimizer = optax.multi_transform(
+                    transforms={
+                        'shear': opt_fn(args.lr_map * args.lr_map_shear_factor),
+                        'default': opt_fn(args.lr_map),
+                    },
+                    param_labels=param_labels,
+                )
+            else:
+                optimizer = opt_fn(args.lr_map)
+
+            opt_state = optimizer.init(init_params)
+
+            def update_step(carry, xs):
+                params, opt_state = carry
+                loss, grads = jax.value_and_grad(nll)(params)
+                updates, opt_state = optimizer.update(grads, opt_state, params)
+                params = optax.apply_updates(params, updates)
+                aux = (loss, params["g1"], params["g2"]) if has_shear else (loss,)
+                return (params, opt_state), aux
+
+            (params, _), scan_out = jax.lax.scan(
+                update_step, (init_params, opt_state), length=args.n_steps_map
+            )
+
+            # Concatenate traces
+            if has_shear:
+                if args.n_steps_map_freeze_shear > 0:
+                    losses_f, g1_f, g2_f = scan_out_f
+                    losses, g1_trace, g2_trace = scan_out
+                    losses = jnp.concatenate([losses_f, losses])
+                    g1_trace = jnp.concatenate([g1_f, g1_trace])
+                    g2_trace = jnp.concatenate([g2_f, g2_trace])
+                else:
+                    losses, g1_trace, g2_trace = scan_out
+                return params, losses, g1_trace, g2_trace
+            else:
+                if args.n_steps_map_freeze_shear > 0:
+                    (losses_f,) = scan_out_f
+                    (losses,) = scan_out
+                    losses = jnp.concatenate([losses_f, losses])
+                else:
+                    (losses,) = scan_out
+                return params, losses
+
+        t_map_start = datetime.now()
+        map_results = jax.vmap(find_map)(map_init_val)
+        if has_shear:
+            init_val, map_losses, map_g1_trace, map_g2_trace = map_results
+            # Block until MAP is complete so the timing reflects actual GPU work
+            init_val["g1"].block_until_ready()
+        else:
+            init_val, map_losses = map_results
+            map_losses.block_until_ready()
+        t_map_end = datetime.now()
+        map_elapsed = t_map_end - t_map_start
+        print(f"MAP elapsed: {map_elapsed}  ({args.n_steps_map_freeze_shear + args.n_steps_map} steps × {args.num_chains} chains)")
+        print(f"MAP elapsed: {map_elapsed}  ({args.n_steps_map_freeze_shear + args.n_steps_map} steps × {args.num_chains} chains)", file=log_file)
+
+        # Print MAP diagnostics
+        if has_shear:
+            print(
+                init_val["g1"] * g_rescale,
+                init_val["g2"] * g_rescale,
+            )
+            print(
+                f"Initial guess: g1={init_val['g1']*g_rescale}, g2={init_val['g2']*g_rescale}",
+                file=log_file,
+            )
+        print(f"MAP final loss (per chain): {map_losses[:, -1]}", file=log_file)
+
+        if args.save_plots:
+            # Plot MAP convergence: loss and g1,g2 evolution
+            n_map_plots = 3 if has_shear else 1
+            fig, axes = plt.subplots(1, n_map_plots, figsize=(5 * n_map_plots, 4))
+            if n_map_plots == 1:
+                axes = [axes]
+            total_map_steps = (args.n_steps_map_freeze_shear if has_shear else 0) + args.n_steps_map
+            steps = jnp.arange(total_map_steps)
+
+            # Loss (log scale, shift to ensure positive values)
+            loss_min = jnp.min(map_losses)
+            loss_offset = jnp.where(loss_min < 0, jnp.abs(loss_min) + 1.0, 0.0)
+            for c in range(map_losses.shape[0]):
+                axes[0].plot(steps, map_losses[c] + loss_offset, alpha=0.7, label=f"chain {c}")
+            axes[0].set_yscale("log")
+            if has_shear and args.n_steps_map_freeze_shear > 0:
+                axes[0].axvline(args.n_steps_map_freeze_shear, color="k", ls=":", alpha=0.5, label="unfreeze g")
+            axes[0].set_xlabel("MAP step")
+            ylabel = "Loss (NLL)" if loss_offset == 0 else f"Loss (NLL + {loss_offset:.1f})"
+            axes[0].set_ylabel(ylabel)
+            axes[0].set_title("MAP loss")
+            axes[0].legend(fontsize=7)
+
+            if has_shear:
+                # g1 trace per chain: shape (n_chains, total_map_steps, 1) -> squeeze last dim
+                map_g1_phys = map_g1_trace.squeeze(-1) * g_rescale  # (n_chains, total_steps)
+                map_g2_phys = map_g2_trace.squeeze(-1) * g_rescale
+
+                for c in range(map_g1_phys.shape[0]):
+                    axes[1].plot(steps, map_g1_phys[c], alpha=0.7, label=f"chain {c}")
+                    axes[2].plot(steps, map_g2_phys[c], alpha=0.7, label=f"chain {c}")
+                axes[1].axhline(args.g1_true, color="r", ls="--", lw=1, label="true")
+                axes[2].axhline(args.g2_true, color="r", ls="--", lw=1, label="true")
+                if args.n_steps_map_freeze_shear > 0:
+                    axes[1].axvline(args.n_steps_map_freeze_shear, color="k", ls=":", alpha=0.5)
+                    axes[2].axvline(args.n_steps_map_freeze_shear, color="k", ls=":", alpha=0.5)
+                axes[1].set_xlabel("MAP step")
+                axes[1].set_ylabel("g1")
+                axes[1].set_title("g1 MAP trace")
+                axes[1].legend(fontsize=7)
+                axes[2].set_xlabel("MAP step")
+                axes[2].set_ylabel("g2")
+                axes[2].set_title("g2 MAP trace")
+                axes[2].legend(fontsize=7)
+
+            fig.tight_layout()
+            fig.savefig(os.path.join(out_dir, "map_convergence.png"), dpi=150)
+            plt.close(fig)
+        if args.save_data:
+            np.save(os.path.join(out_dir, "radio_map_val.npy"), init_val, allow_pickle=True)
+
+    if args.point_estimate:
+        if has_shear:
+            g1_estimates = init_val["g1"] * g_rescale
+            g2_estimates = init_val["g2"] * g_rescale
+            np.save(os.path.join(out_dir, "map_shear_estimates.npy"), jnp.stack([g1_estimates, g2_estimates], axis=-1))
+            print(f"Point estimate g1 (per chain): {g1_estimates}")
+            print(f"Point estimate g2 (per chain): {g2_estimates}")
+            print(f"Point estimate g1 mean: {jnp.mean(g1_estimates):.6f}, g2 mean: {jnp.mean(g2_estimates):.6f}")
+            print(f"True values: g1={args.g1_true}, g2={args.g2_true}")
+        else:
+            print("No shear parameters — point estimate not applicable")
+        print(f"Point estimate saved to {out_dir}", file=log_file)
+        t_end = datetime.now()
+        print(f"End: {t_end.strftime('%Y-%m-%d %H:%M:%S')} (elapsed: {t_end - t_start})", file=log_file)
+        log_file.close()
+        sys.exit(0)
+
+    if args.save_plots and has_shear:
         # Plot the initial guess for the shear
         plt.figure()
         plt.scatter(
-            init_val_["g1"] * (args.g_scale / args.g_sigma),
-            init_val_["g2"] * (args.g_scale / args.g_sigma),
+            init_val_["g1"] * (args.g_prior_scale / args.g_prior_sigma),
+            init_val_["g2"] * (args.g_prior_scale / args.g_prior_sigma),
             label="Initial guess",
         )
         plt.scatter(
-            init_val["g1"] * (args.g_scale / args.g_sigma),
-            init_val["g2"] * (args.g_scale / args.g_sigma),
+            init_val["g1"] * (args.g_prior_scale / args.g_prior_sigma),
+            init_val["g2"] * (args.g_prior_scale / args.g_prior_sigma),
             label="MAP estimate",
         )
         plt.scatter(args.g1_true, args.g2_true, color="red", label="True shear")
+        plt.xlim(args.g1_true - 3 * args.g_prior_scale, args.g1_true + 3 * args.g_prior_scale)
+        plt.ylim(args.g2_true - 3 * args.g_prior_scale, args.g2_true + 3 * args.g_prior_scale)
         plt.xlabel("g1")
         plt.ylabel("g2")
         plt.title("Initial guess for the shear")
@@ -585,18 +1036,138 @@ def main():
                 allow_pickle=True,
             )
 
+        # Convert VAE to float16 for sampling (after adaptation in float32)
+        if args.model_profile == "VAE" and args.vae_precision == "float16":
+            ae = jax.tree.map(
+                lambda x: x.astype(jnp.float16) if isinstance(x, jnp.ndarray) and jnp.issubdtype(x.dtype, jnp.floating) else x,
+                ae,
+            )
+            jitted_decode = eqx.filter_jit(lambda z, key: ae.decode(z.astype(jnp.float16), key=key))
+            # DEBUG ONLY — --no_shear uses noshear model variants; remove later
+            if args.no_shear and args.use_flow:
+                model = partial(
+                    model_fn_VAE_flow_noshear,
+                    Ngal=args.Ngal, Npx=args.Npx,
+                    pixel_scale_vae=args.pixel_scale_vae,
+                    uv_pos=uv_pos, noise_uv=args.noise_uv, obs=data,
+                    flux_sigma=args.flux_prior_sigma, flux_max=args.flux_prior_max, flux_min=args.flux_prior_min,
+                    latent_dim=args.latent_dim, latent_sigma=args.latent_sigma,
+                    jitted_decode=jitted_decode, gsparams=gsparams,
+                    run_type=args.vae_model_inference_mode, batch_size=args.vae_inference_batch_size,
+                    use_dropout=args.use_dropout,
+                    flow_forward=flow_forward, flow_condition=flow_condition,
+                )
+            elif args.no_shear:
+                model = partial(
+                    model_fn_VAE_noshear,
+                    Ngal=args.Ngal, Npx=args.Npx,
+                    pixel_scale_vae=args.pixel_scale_vae,
+                    uv_pos=uv_pos, noise_uv=args.noise_uv, obs=data,
+                    flux_sigma=args.flux_prior_sigma, flux_max=args.flux_prior_max, flux_min=args.flux_prior_min,
+                    latent_dim=args.latent_dim, latent_mean=args.latent_mean, latent_sigma=args.latent_sigma,
+                    jitted_decode=jitted_decode, gsparams=gsparams,
+                    run_type=args.vae_model_inference_mode, batch_size=args.vae_inference_batch_size,
+                    use_dropout=args.use_dropout,
+                )
+            elif args.use_flow:
+                model = partial(
+                    model_fn_VAE_flow,
+                    Ngal=args.Ngal, Npx=args.Npx,
+                    pixel_scale_vae=args.pixel_scale_vae,
+                    uv_pos=uv_pos, noise_uv=args.noise_uv, obs=data,
+                    g_sigma=args.g_prior_sigma, g_scale=args.g_prior_scale,
+                    flux_sigma=args.flux_prior_sigma, flux_max=args.flux_prior_max, flux_min=args.flux_prior_min,
+                    latent_dim=args.latent_dim, latent_sigma=args.latent_sigma,
+                    jitted_decode=jitted_decode, gsparams=gsparams,
+                    run_type=args.vae_model_inference_mode, batch_size=args.vae_inference_batch_size,
+                    use_dropout=args.use_dropout,
+                    flow_forward=flow_forward, flow_condition=flow_condition,
+                )
+            else:
+                model = partial(
+                    model_fn_VAE,
+                    Ngal=args.Ngal, Npx=args.Npx,
+                    pixel_scale_vae=args.pixel_scale_vae,
+                    uv_pos=uv_pos, noise_uv=args.noise_uv, obs=data,
+                    g_sigma=args.g_prior_sigma, g_scale=args.g_prior_scale,
+                    flux_sigma=args.flux_prior_sigma, flux_max=args.flux_prior_max, flux_min=args.flux_prior_min,
+                    latent_dim=args.latent_dim, latent_mean=args.latent_mean, latent_sigma=args.latent_sigma,
+                    jitted_decode=jitted_decode, gsparams=gsparams,
+                    run_type=args.vae_model_inference_mode, batch_size=args.vae_inference_batch_size,
+                    use_dropout=args.use_dropout,
+                )
+            seeded_model = seed(model, jax.random.PRNGKey(0))
+
+            @jax.jit
+            def log_prob_fn(params):
+                @jax.checkpoint
+                def _log_density(params):
+                    return numpyro.infer.util.log_density(
+                        seeded_model, (), {"obs": data}, params,
+                    )[0]
+                return _log_density(params)
+
+            print("VAE decoder converted to float16 for sampling")
+
         kernel = blackjax.ghmc(log_prob_fn, **parameters)
 
     elif args.sampler == "mclmc":
-        # Initialize the kernel (L is required here)
-        # If you don't have an estimate, a common starting value is 1.0 or the sqrt(dim)
-        initial_L = 1.0 
-        initial_step_size = 1e-3
-
-        # kernel = blackjax.mclmc(log_prob_fn, L=initial_L, step_size=initial_step_size)
-        
         key_init, key_tune = jax.random.split(key_warmup)
         key_init_chains = jax.random.split(key_init, args.num_chains)
+
+        # Compute dimensionality and gradient at MAP for initial step_size/L.
+        # Gradient-norm scaling (sqrt(dim)/grad_norm) keeps the leapfrog energy
+        # error in a safe regime: overshooting causes a NaN cascade that
+        # collapses step_size to 0 permanently. Undershooting just costs warmup.
+        first_chain_init = jax.tree.map(lambda x: x[0], init_val)
+        ndim = sum(v.size for v in jax.tree.leaves(first_chain_init))
+        DESIRED_ENERGY_VAR = 1e-3
+        grad_at_map = jax.grad(log_prob_fn)(first_chain_init)
+        grad_norm = jnp.linalg.norm(ravel_pytree(grad_at_map)[0])
+
+        # MAP convergence diagnostic: ‖∇‖ should drop by orders of magnitude
+        # between pre-MAP and post-MAP. If reduction is small, MAP didn't
+        # converge and the gradient-based step_size formula will underestimate.
+        first_chain_pre_map = jax.tree.map(lambda x: x[0], init_val_)
+        grad_pre_map_norm = jnp.linalg.norm(
+            ravel_pytree(jax.grad(log_prob_fn)(first_chain_pre_map))[0]
+        )
+        reduction = float(grad_pre_map_norm / grad_norm) if float(grad_norm) > 0 else float("inf")
+        print(f"MAP gradient reduction: ‖∇‖ pre-MAP={float(grad_pre_map_norm):.3e}, "
+              f"post-MAP={float(grad_norm):.3e}, factor={reduction:.1f}x")
+        print(f"MAP gradient reduction: ‖∇‖ pre-MAP={float(grad_pre_map_norm):.3e}, "
+              f"post-MAP={float(grad_norm):.3e}, factor={reduction:.1f}x", file=log_file)
+
+        # Per-group ‖∇‖ at MAP — identifies which parameters did/didn't converge.
+        print("Per-group ‖∇‖ at MAP:")
+        print("Per-group ‖∇‖ at MAP:", file=log_file)
+        for k in sorted(grad_at_map.keys()):
+            g_flat = grad_at_map[k].ravel()
+            line = (f"  {k:>12s}: ‖∇‖={float(jnp.linalg.norm(g_flat)):.3e}, "
+                    f"max|∂|={float(jnp.max(jnp.abs(g_flat))):.3e}")
+            print(line)
+            print(line, file=log_file)
+
+        # Fallback: when grad_norm is enormous (un-converged MAP or stiff
+        # likelihood), the formula collapses step_size to ~0 and the EMA in
+        # phase 1 cannot recover within frac_tune1·n_warmup steps. Floor at
+        # args.lr_map so adaptation starts from a workable scale.
+        formula_step_size = float(jnp.sqrt(ndim) / grad_norm) * (DESIRED_ENERGY_VAR / 1e-2) ** 0.25
+        if formula_step_size < args.lr_map:
+            # initial_step_size = args.lr_map
+            # init_source = f"floor=lr_map ({args.lr_map:.3e}; formula gave {formula_step_size:.3e})"
+            initial_step_size = .1
+            init_source = f"floor= {initial_step_size:.3e} (formula gave {formula_step_size:.3e})"
+        else:
+            initial_step_size = formula_step_size
+            init_source = f"gradient formula ({formula_step_size:.3e})"
+        initial_L = float(jnp.sqrt(ndim)) * initial_step_size
+        print(f"MCLMC init: ndim={ndim}, grad_norm={float(grad_norm):.3e}, "
+              f"initial_step_size={initial_step_size:.3e}, initial_L={initial_L:.3e} "
+              f"[{init_source}]")
+        print(f"MCLMC init: ndim={ndim}, grad_norm={float(grad_norm):.3e}, "
+              f"initial_step_size={initial_step_size:.3e}, initial_L={initial_L:.3e} "
+              f"[{init_source}]", file=log_file)
 
         def mclmc_factory(inverse_mass_matrix):
             return blackjax.mcmc.mclmc.build_kernel(
@@ -605,7 +1176,26 @@ def main():
                 integrator=blackjax.mcmc.integrators.isokinetic_mclachlan,
             )
 
-        inverse_mass_matrix = 1.0
+        # Build inverse mass matrix. JAX flattens parameter dicts in sorted key order,
+        # so we iterate sorted keys to match the flattened vector layout.
+        # Setting a smaller value for g1/g2 gives them finer effective steps,
+        # compensating for their much narrower posterior relative to latent dims.
+        if args.mclmc_inv_mass_file is not None:
+            inverse_mass_matrix = jnp.array(np.load(args.mclmc_inv_mass_file))
+            print(f"MCLMC inverse mass matrix loaded from {args.mclmc_inv_mass_file}")
+            print(f"  shape={inverse_mass_matrix.shape}, min={inverse_mass_matrix.min():.6f}, "
+                  f"max={inverse_mass_matrix.max():.6f}, ratio={inverse_mass_matrix.max()/inverse_mass_matrix.min():.1f}")
+            print(f"MCLMC inverse mass matrix loaded from {args.mclmc_inv_mass_file}", file=log_file)
+        elif args.mclmc_inv_mass_shear is not None:
+            inv_mass_parts = []
+            for k in sorted(first_chain_init.keys()):
+                val = args.mclmc_inv_mass_shear if k in ("g1", "g2") else 1.0
+                inv_mass_parts.append(jnp.full(first_chain_init[k].size, val))
+            inverse_mass_matrix = jnp.concatenate(inv_mass_parts)
+            print(f"MCLMC diagonal inverse mass matrix: g1/g2={args.mclmc_inv_mass_shear}, others=1.0")
+            print(f"MCLMC diagonal inverse mass matrix: g1/g2={args.mclmc_inv_mass_shear}, others=1.0", file=log_file)
+        else:
+            inverse_mass_matrix = jnp.ones((ndim,))
 
         temp_kernel = blackjax.mclmc(
             log_prob_fn,
@@ -614,38 +1204,180 @@ def main():
             inverse_mass_matrix=inverse_mass_matrix,
         )
 
-        # Run adaptation on the first chain only (the API expects a single state)
-        first_chain_init = jax.tree.map(lambda x: x[0], init_val)
+        # Skip adaptation if both L and step_size are provided
         first_chain_state = temp_kernel.init(first_chain_init, key_init_chains[0])
 
-        max_adapt_attempts = 10
-        for adapt_attempt in range(1, max_adapt_attempts + 1):
-            print(f"MCLMC adaptation attempt {adapt_attempt}/{max_adapt_attempts}...")
-            key_tune, key_retry = jax.random.split(key_tune)
-
-            adapted_state, parameters, _ = mclmc_adj.mclmc_find_L_and_step_size(
-                                            mclmc_kernel=mclmc_factory,
-                                            num_steps=args.n_warmup,
-                                            state=first_chain_state,
-                                            rng_key=key_retry,
+        if args.mclmc_L is not None and args.step_size is not None:
+            print(f"Skipping MCLMC adaptation: using L={args.mclmc_L}, step_size={args.step_size}")
+            print(f"Skipping MCLMC adaptation: using L={args.mclmc_L}, step_size={args.step_size}", file=log_file)
+            parameters = mclmc_adj.MCLMCAdaptationState(
+                L=jnp.array(args.mclmc_L),
+                step_size=jnp.array(args.step_size),
+                inverse_mass_matrix=jnp.array(inverse_mass_matrix),
+            )
+        else:
+            # Build phase-1+2 adaptation factory once. Calling
+            # make_L_step_size_adaptation directly (instead of the
+            # mclmc_find_L_and_step_size wrapper) lets us inject the
+            # gradient-aware initial L/step_size computed above. The wrapper
+            # would discard them and start at L=sqrt(dim), step_size=sqrt(dim)*0.25,
+            # which for stiff radio likelihoods triggers a NaN cascade and
+            # wastes phase-1 steps on step_size_max recovery.
+            frac_tune1, frac_tune2, frac_tune3 = 0.4, 0.4, 0.2
+            L_step_size_adapt = mclmc_adj.make_L_step_size_adaptation(
+                kernel=mclmc_factory,
+                dim=ndim,
+                frac_tune1=frac_tune1,
+                frac_tune2=frac_tune2,
+                desired_energy_var=1e-3,
+                trust_in_estimate=2.0,
+                num_effective_samples=50,
+                diagonal_preconditioning=True,
             )
 
-            if parameters.step_size > 0 and parameters.L > 0:
-                break
-            print(f"Adaptation failed (step_size={parameters.step_size}, L={parameters.L}), retrying...")
+            initial_params = mclmc_adj.MCLMCAdaptationState(
+                L=jnp.array(initial_L),
+                step_size=jnp.array(initial_step_size),
+                inverse_mass_matrix=jnp.array(inverse_mass_matrix),
+            )
 
-        if parameters.step_size <= 0 or parameters.L <= 0:
-            msg = (f"MCLMC adaptation failed after {max_adapt_attempts} attempts: "
-                   f"step_size={parameters.step_size}, L={parameters.L}")
-            print(msg)
-            print(msg, file=log_file)
-            log_file.close()
-            raise RuntimeError(msg)
+            max_adapt_attempts = 10
+            for adapt_attempt in range(1, max_adapt_attempts + 1):
+                print(f"MCLMC adaptation attempt {adapt_attempt}/{max_adapt_attempts}...")
+                key_tune, key_retry = jax.random.split(key_tune)
+                key_phase12, key_phase3 = jax.random.split(key_retry)
 
-        print("Step size:", parameters.step_size)
-        print(f"Step size: {parameters.step_size}", file=log_file)
-        print("L:", parameters.L)
-        print(f"L: {parameters.L}", file=log_file)
+                # Phase 1+2: adapt step_size, L, and inverse_mass_matrix
+                adapted_state, parameters = L_step_size_adapt(
+                    first_chain_state, initial_params, args.n_warmup, key_phase12
+                )
+                print(f"  After phase 1+2: L={float(parameters.L):.6f}, "
+                      f"step_size={float(parameters.step_size):.8f}")
+
+                # Phase 3: refine L via ESS — only if phase 1+2 didn't collapse.
+                # A collapsed phase 1+2 means L or step_size went to ~0 (dead chain),
+                # so phase 3 would just propagate the dead state.
+                chain_ok = float(parameters.L) > 1e-10 and float(parameters.step_size) > 1e-10
+                if chain_ok and frac_tune3 > 0:
+                    adapted_kernel = mclmc_factory(parameters.inverse_mass_matrix)
+                    adapted_state, parameters = mclmc_adj.make_adaptation_L(
+                        adapted_kernel, frac=frac_tune3, Lfactor=0.4
+                    )(adapted_state, parameters, args.n_warmup, key_phase3)
+                    print(f"  After phase 3:   L={float(parameters.L):.6f}, "
+                          f"step_size={float(parameters.step_size):.8f}")
+                elif not chain_ok:
+                    print(f"  Phase 1+2 collapsed; skipping phase 3")
+
+                if parameters.step_size > 0 and parameters.L > 0:
+                    break
+                print(f"Adaptation failed (step_size={parameters.step_size}, L={parameters.L}), retrying...")
+
+            if parameters.step_size <= 0 or parameters.L <= 0:
+                msg = (f"MCLMC adaptation failed after {max_adapt_attempts} attempts: "
+                       f"step_size={parameters.step_size}, L={parameters.L}")
+                print(msg)
+                print(msg, file=log_file)
+                t_end = datetime.now()
+                print(f"End: {t_end.strftime('%Y-%m-%d %H:%M:%S')} (elapsed: {t_end - t_start})", file=log_file)
+                log_file.close()
+                raise RuntimeError(msg)
+
+            print("Step size:", parameters.step_size)
+            print(f"Step size: {parameters.step_size}", file=log_file)
+            print("L:", parameters.L)
+            print(f"L: {parameters.L}", file=log_file)
+            inv_mass = parameters.inverse_mass_matrix
+            if hasattr(inv_mass, 'shape') and inv_mass.ndim > 0:
+                print(f"Inverse mass matrix: min={inv_mass.min():.6f}, max={inv_mass.max():.6f}, "
+                      f"median={jnp.median(inv_mass):.6f}, ratio={inv_mass.max()/inv_mass.min():.1f}")
+                print(f"Inverse mass matrix: min={inv_mass.min():.6f}, max={inv_mass.max():.6f}, "
+                      f"median={jnp.median(inv_mass):.6f}, ratio={inv_mass.max()/inv_mass.min():.1f}", file=log_file)
+                # Print per-parameter group and save full vector
+                offset = 0
+                for k in sorted(first_chain_init.keys()):
+                    size = first_chain_init[k].size
+                    chunk = inv_mass[offset:offset+size]
+                    print(f"  {k:>6s} [{size:4d}]: min={chunk.min():.6f}, max={chunk.max():.6f}, median={jnp.median(chunk):.6f}")
+                    print(f"  {k:>6s} [{size:4d}]: min={chunk.min():.6f}, max={chunk.max():.6f}, median={jnp.median(chunk):.6f}", file=log_file)
+                    offset += size
+                np.save(os.path.join(out_dir, "mclmc_inv_mass_matrix.npy"), np.array(inv_mass))
+                print(f"Saved inverse mass matrix to {out_dir}/mclmc_inv_mass_matrix.npy")
+            else:
+                print(f"Inverse mass matrix: scalar = {inv_mass}")
+                print(f"Inverse mass matrix: scalar = {inv_mass}", file=log_file)
+
+        # Convert VAE to float16 for sampling (after adaptation in float32)
+        if args.model_profile == "VAE" and args.vae_precision == "float16":
+            ae = jax.tree.map(
+                lambda x: x.astype(jnp.float16) if isinstance(x, jnp.ndarray) and jnp.issubdtype(x.dtype, jnp.floating) else x,
+                ae,
+            )
+            jitted_decode = eqx.filter_jit(lambda z, key: ae.decode(z.astype(jnp.float16), key=key))
+            # DEBUG ONLY — --no_shear uses noshear model variants; remove later
+            if args.no_shear and args.use_flow:
+                model = partial(
+                    model_fn_VAE_flow_noshear,
+                    Ngal=args.Ngal, Npx=args.Npx,
+                    pixel_scale_vae=args.pixel_scale_vae,
+                    uv_pos=uv_pos, noise_uv=args.noise_uv, obs=data,
+                    flux_sigma=args.flux_prior_sigma, flux_max=args.flux_prior_max, flux_min=args.flux_prior_min,
+                    latent_dim=args.latent_dim, latent_sigma=args.latent_sigma,
+                    jitted_decode=jitted_decode, gsparams=gsparams,
+                    run_type=args.vae_model_inference_mode, batch_size=args.vae_inference_batch_size,
+                    use_dropout=args.use_dropout,
+                    flow_forward=flow_forward, flow_condition=flow_condition,
+                )
+            elif args.no_shear:
+                model = partial(
+                    model_fn_VAE_noshear,
+                    Ngal=args.Ngal, Npx=args.Npx,
+                    pixel_scale_vae=args.pixel_scale_vae,
+                    uv_pos=uv_pos, noise_uv=args.noise_uv, obs=data,
+                    flux_sigma=args.flux_prior_sigma, flux_max=args.flux_prior_max, flux_min=args.flux_prior_min,
+                    latent_dim=args.latent_dim, latent_mean=args.latent_mean, latent_sigma=args.latent_sigma,
+                    jitted_decode=jitted_decode, gsparams=gsparams,
+                    run_type=args.vae_model_inference_mode, batch_size=args.vae_inference_batch_size,
+                    use_dropout=args.use_dropout,
+                )
+            elif args.use_flow:
+                model = partial(
+                    model_fn_VAE_flow,
+                    Ngal=args.Ngal, Npx=args.Npx,
+                    pixel_scale_vae=args.pixel_scale_vae,
+                    uv_pos=uv_pos, noise_uv=args.noise_uv, obs=data,
+                    g_sigma=args.g_prior_sigma, g_scale=args.g_prior_scale,
+                    flux_sigma=args.flux_prior_sigma, flux_max=args.flux_prior_max, flux_min=args.flux_prior_min,
+                    latent_dim=args.latent_dim, latent_sigma=args.latent_sigma,
+                    jitted_decode=jitted_decode, gsparams=gsparams,
+                    run_type=args.vae_model_inference_mode, batch_size=args.vae_inference_batch_size,
+                    use_dropout=args.use_dropout,
+                    flow_forward=flow_forward, flow_condition=flow_condition,
+                )
+            else:
+                model = partial(
+                    model_fn_VAE,
+                    Ngal=args.Ngal, Npx=args.Npx,
+                    pixel_scale_vae=args.pixel_scale_vae,
+                    uv_pos=uv_pos, noise_uv=args.noise_uv, obs=data,
+                    g_sigma=args.g_prior_sigma, g_scale=args.g_prior_scale,
+                    flux_sigma=args.flux_prior_sigma, flux_max=args.flux_prior_max, flux_min=args.flux_prior_min,
+                    latent_dim=args.latent_dim, latent_mean=args.latent_mean, latent_sigma=args.latent_sigma,
+                    jitted_decode=jitted_decode, gsparams=gsparams,
+                    run_type=args.vae_model_inference_mode, batch_size=args.vae_inference_batch_size,
+                    use_dropout=args.use_dropout,
+                )
+            seeded_model = seed(model, jax.random.PRNGKey(0))
+
+            @jax.jit
+            def log_prob_fn(params):
+                @jax.checkpoint
+                def _log_density(params):
+                    return numpyro.infer.util.log_density(
+                        seeded_model, (), {"obs": data}, params,
+                    )[0]
+                return _log_density(params)
+
+            print("VAE decoder converted to float16 for sampling")
 
         # Build the final kernel with tuned parameters
         kernel = blackjax.mclmc(log_prob_fn, **parameters._asdict())
@@ -676,127 +1408,304 @@ def main():
 
         # kernel = blackjax.mclmc(log_prob_fn, step_size=step_size)
 
+    elif args.sampler == "gibbs":
+        # ── Gibbs block sampler ──────────────────────────────────────────────
+        # Alternates between:
+        #   g-block : sample {g1, g2} (2D) with z/flux fixed
+        #   z-block : sample {z/u, flux} (~1700D) with g1/g2 fixed
+        # Both blocks use MCLMC with independently adapted L/step_size.
+        from blackjax.mcmc.mclmc import build_kernel as mclmc_build_kernel
+        from blackjax.mcmc.integrators import isokinetic_mclachlan, IntegratorState
+
+        G_KEYS = {"g1", "g2"}
+
+        def split_params(params):
+            g_p = {k: v for k, v in params.items() if k in G_KEYS}
+            z_p = {k: v for k, v in params.items() if k not in G_KEYS}
+            return g_p, z_p
+
+        key_init, key_tune_g, key_tune_z = jax.random.split(key_warmup, 3)
+        key_init_chains = jax.random.split(key_init, args.num_chains)
+
+        first_chain = jax.tree.map(lambda x: x[0], init_val)
+        g_init_first, z_init_first = split_params(first_chain)
+
+        ndim_g = sum(v.size for v in jax.tree.leaves(g_init_first))
+        ndim_z = sum(v.size for v in jax.tree.leaves(z_init_first))
+        print(f"Gibbs blocks: g-block={ndim_g}D, z-block={ndim_z}D")
+        print(f"Gibbs blocks: g-block={ndim_g}D, z-block={ndim_z}D", file=log_file)
+
+        # Conditioning log-probs for adaptation (fixed at MAP values)
+        def make_log_prob_g(z_cond):
+            def lp(g_p): return log_prob_fn({**g_p, **z_cond})
+            return lp
+
+        def make_log_prob_z(g_cond):
+            def lp(z_p): return log_prob_fn({**g_cond, **z_p})
+            return lp
+
+        log_prob_g_adapt = make_log_prob_g(z_init_first)
+        log_prob_z_adapt = make_log_prob_z(g_init_first)
+
+        L_g0 = jnp.sqrt(float(ndim_g))
+        ss_g0 = L_g0 / ndim_g
+        L_z0 = jnp.sqrt(float(ndim_z))
+        ss_z0 = L_z0 / ndim_z
+
+        # --- Adapt g-block (NUTS with window adaptation) ---
+        # MCLMC performs poorly in 2D; NUTS with dual-averaging is far more robust.
+        print(f"Adapting g-block NUTS (n_warmup_g={args.n_warmup_g})...")
+        warmup_g = blackjax.window_adaptation(
+            blackjax.nuts, log_prob_g_adapt, initial_step_size=ss_g0)
+        (_, g_nuts_params), _ = warmup_g.run(
+            key_tune_g, g_init_first, num_steps=args.n_warmup_g)
+        ss_g = g_nuts_params["step_size"]
+        inv_mass_g = g_nuts_params["inverse_mass_matrix"]
+        print(f"g-block NUTS adapted: step_size={ss_g:.4f}")
+        print(f"g-block NUTS adapted: step_size={ss_g:.4f}", file=log_file)
+
+        # --- Adapt z-block ---
+        print(f"Adapting z-block MCLMC (n_warmup={args.n_warmup})...")
+        tmp_z = blackjax.mclmc(log_prob_z_adapt, step_size=ss_z0, L=L_z0)
+        z_state_adapt = tmp_z.init(z_init_first, key_init_chains[0])
+
+        def z_factory(inv_mass):
+            return mclmc_build_kernel(log_prob_z_adapt, inv_mass, isokinetic_mclachlan)
+
+        for attempt in range(10):
+            _, z_params, _ = mclmc_adj.mclmc_find_L_and_step_size(
+                mclmc_kernel=z_factory, num_steps=args.n_warmup,
+                state=z_state_adapt,
+                rng_key=jax.random.fold_in(key_tune_z, attempt))
+            if z_params.step_size > 0 and z_params.L > 0:
+                break
+            print(f"z-block adaptation attempt {attempt+1} failed, retrying...")
+        L_z, ss_z = z_params.L, z_params.step_size
+        inv_mass_z = z_params.inverse_mass_matrix
+        print(f"z-block adapted: L={L_z:.3f}, step_size={ss_z:.4f}")
+        print(f"z-block adapted: L={L_z:.3f}, step_size={ss_z:.4f}", file=log_file)
+
+        # --- Initialize all chains ---
+        g_init_all = {k: init_val[k] for k in G_KEYS}
+        z_init_all = {k: v for k, v in init_val.items() if k not in G_KEYS}
+
+        nuts_kernel_g = blackjax.nuts(
+            log_prob_g_adapt, step_size=ss_g, inverse_mass_matrix=inv_mass_g)
+        tmp_z_full = blackjax.mclmc(log_prob_z_adapt, step_size=ss_z, L=L_z,
+                                    inverse_mass_matrix=inv_mass_z)
+        last_g_states = jax.vmap(nuts_kernel_g.init)(g_init_all)
+        last_z_states = jax.vmap(tmp_z_full.init)(z_init_all, key_init_chains)
+
+        # --- JIT-compiled block step functions ---
+        # conditioning_params flows as a traced JAX argument so no retrace on
+        # repeated calls with different values of the same shape/dtype.
+        @jax.jit
+        def run_g_block(g_state, z_cond, keys):
+            """n_gibbs_g_steps NUTS steps on g given fixed z_cond."""
+            def lp_g(g): return log_prob_fn({**g, **z_cond})
+            # Refresh logdensity/grad for current z conditioning
+            new_ld, new_grad = jax.value_and_grad(lp_g)(g_state.position)
+            g_state_fresh = g_state._replace(logdensity=new_ld, logdensity_grad=new_grad)
+            nuts_kern = blackjax.nuts(lp_g, step_size=ss_g, inverse_mass_matrix=inv_mass_g)
+            def step(s, k): return nuts_kern.step(k, s)
+            return jax.lax.scan(step, g_state_fresh, keys)
+
+        @jax.jit
+        def run_z_block(z_state, g_cond, keys):
+            """n_gibbs_z_steps MCLMC steps on z given fixed g_cond."""
+            def lp_z(z): return log_prob_fn({**g_cond, **z})
+            new_ld, new_grad = jax.value_and_grad(lp_z)(z_state.position)
+            z_state_fresh = IntegratorState(z_state.position, z_state.momentum,
+                                            new_ld, new_grad)
+            z_kern = mclmc_build_kernel(lp_z, inv_mass_z, isokinetic_mclachlan)
+            def step(s, k): return z_kern(k, s, L_z, ss_z)
+            return jax.lax.scan(step, z_state_fresh, keys)
+
     else:
-        raise ValueError("Sampler not recognized. Use ghmc or mclmc.")
+        raise ValueError("Sampler not recognized. Use ghmc, mclmc, or gibbs.")
 
-    @partial(jax.jit, static_argnames=("num_steps",))
-    def run_hmc(init_states, key, num_steps=1):
+    if args.sampler == "gibbs":
+        # === GIBBS SAMPLING LOOP ===
+        # Alternates g-block (2D) and z-block MCLMC; one merged sample per outer iter.
+        print(f"Number of chains: {args.num_chains}", file=log_file)
+        print(f"Number of Gibbs iterations: {args.num * 2}", file=log_file)
+        print(f"g-block steps/iter: {args.n_gibbs_g_steps}", file=log_file)
+        print(f"z-block steps/iter: {args.n_gibbs_z_steps}", file=log_file)
 
-        def make_step(state, key):
-            state, info = kernel.step(key, state)
-            return state, (state, info)
+        sample_list = []
+        key_gibbs = key_sample
 
-        keys = jax.random.split(key, num_steps)
-        last_states, (samples, info) = jax.lax.scan(make_step, init_states, keys)
+        for i in range(args.num * 2):
+            key_gibbs, k_g_all, k_z_all = jax.random.split(key_gibbs, 3)
+            # Per-chain sub-step keys: shape (num_chains, n_steps, 2)
+            keys_g = jax.vmap(lambda k: jax.random.split(k, args.n_gibbs_g_steps))(
+                jax.random.split(k_g_all, args.num_chains))
+            keys_z = jax.vmap(lambda k: jax.random.split(k, args.n_gibbs_z_steps))(
+                jax.random.split(k_z_all, args.num_chains))
 
-        return last_states, (samples, info)
+            # G-block: sample g1/g2 with z/flux fixed at current last_z_states
+            last_g_states, _ = jax.vmap(run_g_block)(
+                last_g_states, last_z_states.position, keys_g)
+            # Z-block: sample z/flux with g1/g2 fixed at current last_g_states
+            last_z_states, _ = jax.vmap(run_z_block)(
+                last_z_states, last_g_states.position, keys_z)
 
-    # loop over lax.scan to save GPU memorry
-    print(f"Number of chains: {args.num_chains}", file=log_file)
-    print(f"Number of loops: {args.num}", file=log_file)
-    print(f"Number of steps: {args.num_steps}", file=log_file)
-    print(f"Number of samples per chain: {args.num_steps*args.num*2}", file=log_file)
+            # Store merged position: one sample per chain per outer iter
+            merged = {**last_g_states.position, **last_z_states.position}
+            sample_list.append(merged)
 
-    key_chains = jax.random.split(key_sample, args.num_chains)
+            g1_mean = float(last_g_states.position["g1"].mean()) * g_rescale
+            g1_std  = float(last_g_states.position["g1"].std())  * g_rescale
+            g2_mean = float(last_g_states.position["g2"].mean()) * g_rescale
+            g2_std  = float(last_g_states.position["g2"].std())  * g_rescale
+            diag = (f"  Gibbs {i+1}/{args.num*2} | "
+                    f"g1={g1_mean:.4f}±{g1_std:.4f} | "
+                    f"g2={g2_mean:.4f}±{g2_std:.4f}")
+            print(diag)
+            print(diag, file=log_file)
 
-    last_states, _ = jax.vmap(lambda init_states, keys: run_hmc(init_states, keys, 1))(
-        last_states, key_chains
-    )
+            # Midpoint ESS check
+            if i + 1 == args.num:
+                mid_s = {
+                    k: np.stack([np.asarray(sample_list[j][k])
+                                 for j in range(args.num)], axis=1)
+                    for k in sample_list[0]
+                }
+                print("ESS g1 (midpoint)",
+                      blackjax.diagnostics.effective_sample_size(mid_s["g1"][..., 0]))
+                print("ESS g2 (midpoint)",
+                      blackjax.diagnostics.effective_sample_size(mid_s["g2"][..., 0]))
+                print("ESS at midpoint", file=log_file)
+                print("ESS g1",
+                      blackjax.diagnostics.effective_sample_size(mid_s["g1"][..., 0]),
+                      file=log_file)
+                print("ESS g2",
+                      blackjax.diagnostics.effective_sample_size(mid_s["g2"][..., 0]),
+                      file=log_file)
 
-    sample_list = []
+        # Build samples_: shape (num_chains, num*2, *param_shape)
+        samples_ = {
+            k: np.stack([np.asarray(sample_list[i][k])
+                         for i in range(args.num * 2)], axis=1)
+            for k in sample_list[0]
+        }
 
-    keys = jax.vmap(jax.random.split, in_axes=(0, None))(key_chains, 2 * args.num)
-
-    for i in range(args.num):
-        print("Chain", i + 1, "of", 2 * args.num, "running...")
-        last_states, (samples, info) = jax.vmap(
-            lambda init_states, keys: run_hmc(init_states, keys, args.num_steps)
-        )(last_states, keys[:, i, :])
-        sample_list.append(samples)
-
-    samples_ = {
-        key: np.concatenate([sample_list[k].position[key] for k in range(args.num)], 1)
-        for key in last_states.position
-    }
-    print("ESS g1", blackjax.diagnostics.effective_sample_size(samples_["g1"][..., 0]))
-    print("ESS g2", blackjax.diagnostics.effective_sample_size(samples_["g2"][..., 0]))
-    print(
-        "ESS flux", blackjax.diagnostics.effective_sample_size(samples_["flux"][..., 0])
-    )
-    if args.model_profile != "VAE":
-        print(
-            "ESS hlr", blackjax.diagnostics.effective_sample_size(samples_["hlr"][..., 0])
-        )
-        print("ESS e1", blackjax.diagnostics.effective_sample_size(samples_["e1"][..., 0]))
-        print("ESS e2", blackjax.diagnostics.effective_sample_size(samples_["e2"][..., 0]))
-    print("ESS at the end of first loop", file=log_file)
-    print(
-        "ESS g1",
-        blackjax.diagnostics.effective_sample_size(samples_["g1"][..., 0]),
-        file=log_file,
-    )
-    print(
-        "ESS g2",
-        blackjax.diagnostics.effective_sample_size(samples_["g2"][..., 0]),
-        file=log_file,
-    )
-    print(
-        "ESS flux",
-        blackjax.diagnostics.effective_sample_size(samples_["flux"][..., 0]),
-        file=log_file,
-    )
-    if args.model_profile != "VAE":
-        print(
-            "ESS hlr",
-            blackjax.diagnostics.effective_sample_size(samples_["hlr"][..., 0]),
-            file=log_file,
-        )
-        
-        print(
-            "ESS e1",
-            blackjax.diagnostics.effective_sample_size(samples_["e1"][..., 0]),
-            file=log_file,
-        )
-        print(
-            "ESS e2",
-            blackjax.diagnostics.effective_sample_size(samples_["e2"][..., 0]),
-            file=log_file,
-        )
-
-    # extra chains
-    for i in range(args.num):
-        print("Extra chain", args.num + i + 1, "of", 2 * args.num, "running...")
-        last_states, (samples, info) = jax.vmap(
-            lambda init_states, keys: run_hmc(init_states, keys, args.num_steps)
-        )(last_states, keys[:, args.num + i, :])
-        sample_list.append(samples)
-
-    # concatenates chains
-    samples_ = {
-        key: np.concatenate(
-            [sample_list[k].position[key] for k in range(args.num * 2)], 1
-        )
-        for key in last_states.position
-    }
-
-    # labels = ["hlr", "flux", "r_ell", "angle_ell", "g1", "g2"]
-    if args.model_profile == "VAE":
-        labels = ["flux", "g1", "g2"]
     else:
-        labels = ["hlr", "flux", "e1", "e2", "g1", "g2"]
+        # === GHMC / MCLMC SAMPLING LOOP ===
+        @partial(jax.jit, static_argnames=("num_steps",))
+        def run_hmc(init_states, key, num_steps=1):
+
+            def make_step(state, key):
+                state, info = kernel.step(key, state)
+                return state, (state, info)
+
+            keys = jax.random.split(key, num_steps)
+            last_states, (samples, info) = jax.lax.scan(make_step, init_states, keys)
+
+            return last_states, (samples, info)
+
+        # loop over lax.scan to save GPU memory
+        print(f"Number of chains: {args.num_chains}", file=log_file)
+        print(f"Number of loops: {args.num}", file=log_file)
+        print(f"Number of steps: {args.num_steps}", file=log_file)
+        print(f"Number of samples per chain: {args.num_steps*args.num*2}", file=log_file)
+
+        key_chains = jax.random.split(key_sample, args.num_chains)
+
+        last_states, _ = jax.vmap(lambda init_states, keys: run_hmc(init_states, keys, 1))(
+            last_states, key_chains
+        )
+
+        sample_list = []
+
+        keys = jax.vmap(jax.random.split, in_axes=(0, None))(key_chains, 2 * args.num)
+
+        for i in range(args.num):
+            print("Chain", i + 1, "of", 2 * args.num, "running...")
+            last_states, (samples, info) = jax.vmap(
+                lambda init_states, keys: run_hmc(init_states, keys, args.num_steps)
+            )(last_states, keys[:, i, :])
+            sample_list.append(samples)
+
+            # Quick diagnostics: sampler health and shear chain statistics.
+            # MCLMC info has no acceptance_rate; energy_change measures integrator accuracy.
+            # GHMC info has acceptance_rate directly (target > 0.6).
+            if args.sampler == "mclmc":
+                sampler_diag = f"mean|energy_change|={float(jnp.abs(info.energy_change).mean()):.3f}"
+            else:
+                sampler_diag = f"accept={float(info.acceptance_rate.mean()):.3f}"
+            diag = f"  {sampler_diag}"
+            if has_shear:
+                g1_mean = float(samples.position["g1"].mean()) * g_rescale
+                g1_std  = float(samples.position["g1"].std())  * g_rescale
+                g2_mean = float(samples.position["g2"].mean()) * g_rescale
+                g2_std  = float(samples.position["g2"].std())  * g_rescale
+                diag += (f" | g1={g1_mean:.4f}±{g1_std:.4f}"
+                         f" | g2={g2_mean:.4f}±{g2_std:.4f}")
+            print(diag)
+            print(diag, file=log_file)
+
+        samples_ = {
+            key: np.concatenate([sample_list[k].position[key] for k in range(args.num)], 1)
+            for key in last_states.position
+        }
+        # Print ESS for all parameters
+        print("ESS at the end of first loop")
+        print("ESS at the end of first loop", file=log_file)
+        for k in sorted(samples_.keys()):
+            if samples_[k].ndim >= 3 and samples_[k].shape[-1] > 1:
+                # Multi-dimensional param (e.g. z, flux per galaxy): report mean ESS over first component
+                if samples_[k].ndim == 5:  # z: (chains, steps, Ngal, d1, d2)
+                    ess_vals = [blackjax.diagnostics.effective_sample_size(samples_[k][:, :, gal, 0, 0])
+                                for gal in range(min(args.Ngal, samples_[k].shape[2]))]
+                    ess_mean = np.mean(ess_vals)
+                    print(f"ESS {k} (mean over galaxies, first component) {ess_mean:.1f}")
+                    print(f"ESS {k} (mean over galaxies, first component) {ess_mean:.1f}", file=log_file)
+                else:
+                    ess = blackjax.diagnostics.effective_sample_size(samples_[k][..., 0])
+                    print(f"ESS {k} {ess:.1f}")
+                    print(f"ESS {k} {ess:.1f}", file=log_file)
+            else:
+                ess = blackjax.diagnostics.effective_sample_size(samples_[k][..., 0])
+                print(f"ESS {k} {ess:.1f}")
+                print(f"ESS {k} {ess:.1f}", file=log_file)
+
+        # extra chains
+        for i in range(args.num):
+            print("Extra chain", args.num + i + 1, "of", 2 * args.num, "running...")
+            last_states, (samples, info) = jax.vmap(
+                lambda init_states, keys: run_hmc(init_states, keys, args.num_steps)
+            )(last_states, keys[:, args.num + i, :])
+            sample_list.append(samples)
+
+        # concatenates chains
+        samples_ = {
+            key: np.concatenate(
+                [sample_list[k].position[key] for k in range(args.num * 2)], 1
+            )
+            for key in last_states.position
+        }
+
+    # Build labels list from available sample keys (generic over model)
+    # Plot scalar/low-dim params; skip high-dim latents (z, u) but add first component
+    labels = [k for k in sorted(samples_.keys()) if k not in ("z", "u")]
+    latent_key = "z" if "z" in samples_ else ("u" if "u" in samples_ else None)
+    if latent_key is not None:
+        labels.append(f"{latent_key}[0]")
 
     if args.save_plots:
-        fig, axes = plt.subplots(len(labels), figsize=(10, 7), sharex=True)
+        fig, axes = plt.subplots(max(len(labels), 1), figsize=(10, 2.5 * max(len(labels), 1)), sharex=True)
+        if len(labels) == 1:
+            axes = [axes]
         for i, label in enumerate(labels):
-            print(i, label)
             ax = axes[i]
             for k in range(args.num_chains):
-                # if label in ["g1", "g2"]:
-                #     ax.plot(samples_[label][k,:,0]*0.1, "k", alpha=0.3)
-                # else:
-                #     ax.plot(samples_[label][k,:,0], "k", alpha=0.3)
-                ax.plot(samples_[label][k, :, 0], "k", alpha=0.3)
-            ax.set_xlim(0, args.num_steps * args.num * 2)
+                if latent_key is not None and label == f"{latent_key}[0]":
+                    ax.plot(samples_[latent_key][k, :, 0, 0, 0], "k", alpha=0.3)
+                else:
+                    ax.plot(samples_[label][k, :, 0], "k", alpha=0.3)
+            ref_key = latent_key if (latent_key is not None and label == f"{latent_key}[0]") else label
+            ax.set_xlim(0, samples_[ref_key].shape[1])
             ax.set_ylabel(label)
             ax.yaxis.set_label_coords(-0.1, 0.5)
         axes[-1].set_xlabel("step number")
@@ -804,60 +1713,63 @@ def main():
             plt.savefig(os.path.join(out_dir, "radio_chains.png"))
         plt.close()
 
-        fig, axes = plt.subplots(len(labels), figsize=(10, 7), sharex=True)
+        # Scaled chains plot
+        fig, axes = plt.subplots(max(len(labels), 1), figsize=(10, 2.5 * max(len(labels), 1)), sharex=True)
+        if len(labels) == 1:
+            axes = [axes]
         for i, label in enumerate(labels):
             ax = axes[i]
             for k in range(args.num_chains):
-                if label == "hlr":
-                    # hlr -> jax.nn.softplus(hlr + hlr_offset) * hlr_scale + hlr_min
+                if label in ("hlr", "hlr_disk", "hlr_bulge") and label in samples_:
                     ax.plot(
-                        jax.nn.sigmoid(samples_["hlr"][k, :, 0] / args.hlr_prior_sigma)
+                        jax.nn.sigmoid(samples_[label][k, :, 0] / args.hlr_prior_sigma)
                         * (args.hlr_prior_max - args.hlr_prior_min)
                         + args.hlr_prior_min,
-                        "k",
-                        alpha=0.3,
-                    )
-                if label == "flux":
-                    # flux -> jax.nn.softplus(flux + flux_offset) * flux_scale + flux_min
+                        "k", alpha=0.3)
+                elif label == "flux":
                     ax.plot(
                         jax.nn.sigmoid(samples_["flux"][k, :, 0] / args.flux_prior_sigma)
                         * (args.flux_prior_max - args.flux_prior_min)
                         + args.flux_prior_min,
-                        "k",
-                        alpha=0.3,
-                    )
-                if label in ["e1", "e2"]:
-                    #  e1, e2 -> to_unit_disk
-                    e = jnp.stack(
-                        [
-                            samples_["e1"][k, :, 0] / args.ell_sigma * args.ell_scale,
-                            samples_["e2"][k, :, 0] / args.ell_sigma * args.ell_scale,
-                        ],
-                        0,
-                    )
+                        "k", alpha=0.3)
+                elif label == "flux_ratio":
+                    ax.plot(
+                        jax.nn.sigmoid(samples_["flux_ratio"][k, :, 0]) * args.composite_flux_ratio_max,
+                        "k", alpha=0.3)
+                elif label in ["e1", "e2"] and "e1" in samples_ and "e2" in samples_:
+                    e = jnp.stack([
+                        samples_["e1"][k, :, 0] / args.ell_prior_sigma * args.ell_prior_scale,
+                        samples_["e2"][k, :, 0] / args.ell_prior_sigma * args.ell_prior_scale,
+                    ], 0)
                     e = to_unit_disk(e)
-                    if label == "e1":
-                        ax.plot(e[0], "k", alpha=0.3)
-                    else:
-                        ax.plot(e[1], "k", alpha=0.3)
-                if label in ["g1", "g2"]:
-                    # g1, g2 -> to_unit_disk
-                    g = jnp.stack(
-                        [
-                            samples_["g1"][k, :, 0] / args.g_sigma * args.g_scale,
-                            samples_["g2"][k, :, 0] / args.g_sigma * args.g_scale,
-                        ],
-                        0,
-                    )
+                    ax.plot(e[0] if label == "e1" else e[1], "k", alpha=0.3)
+                elif label in ["e1_disk", "e2_disk"] and "e1_disk" in samples_:
+                    e = jnp.stack([
+                        samples_["e1_disk"][k, :, 0] / args.ell_prior_sigma * args.ell_prior_scale,
+                        samples_["e2_disk"][k, :, 0] / args.ell_prior_sigma * args.ell_prior_scale,
+                    ], 0)
+                    e = to_unit_disk(e)
+                    ax.plot(e[0] if label == "e1_disk" else e[1], "k", alpha=0.3)
+                elif label in ["e1_bulge", "e2_bulge"] and "e1_bulge" in samples_:
+                    e = jnp.stack([
+                        samples_["e1_bulge"][k, :, 0] / args.ell_prior_sigma * args.ell_prior_scale,
+                        samples_["e2_bulge"][k, :, 0] / args.ell_prior_sigma * args.ell_prior_scale,
+                    ], 0)
+                    e = to_unit_disk(e)
+                    ax.plot(e[0] if label == "e1_bulge" else e[1], "k", alpha=0.3)
+                elif label in ["g1", "g2"] and "g1" in samples_ and "g2" in samples_:
+                    g = jnp.stack([
+                        samples_["g1"][k, :, 0] / args.g_prior_sigma * args.g_prior_scale,
+                        samples_["g2"][k, :, 0] / args.g_prior_sigma * args.g_prior_scale,
+                    ], 0)
                     g = to_unit_disk(g)
-                    if label == "g1":
-                        ax.plot(g[0], "k", alpha=0.3)
-                    else:
-                        ax.plot(g[1], "k", alpha=0.3)
+                    ax.plot(g[0] if label == "g1" else g[1], "k", alpha=0.3)
+                elif latent_key is not None and label == f"{latent_key}[0]":
+                    ax.plot(samples_[latent_key][k, :, 0, 0, 0] / args.latent_sigma, "k", alpha=0.3)
                 else:
-                    pass
-
-            ax.set_xlim(0, args.num_steps * args.num * 2)
+                    ax.plot(samples_[label][k, :, 0], "k", alpha=0.3)
+            ref_key = latent_key if (latent_key is not None and label == f"{latent_key}[0]") else label
+            ax.set_xlim(0, samples_[ref_key].shape[1])
             ax.set_ylabel(label)
             ax.yaxis.set_label_coords(-0.1, 0.5)
         axes[-1].set_xlabel("step number")
@@ -865,104 +1777,75 @@ def main():
             plt.savefig(os.path.join(out_dir, "radio_chains_scaled.png"))
         plt.close()
 
-        two_truths = np.array([args.g1_true, args.g2_true])
-        samples_g = np.concatenate([samples_["g1"], samples_["g2"]], -1).reshape(
-            (-1, 2)
-        ) * (args.g_scale / args.g_sigma)
+        if has_shear:
+            two_truths = np.array([args.g1_true, args.g2_true])
+            samples_g = np.concatenate([samples_["g1"], samples_["g2"]], -1).reshape(
+                (-1, 2)
+            ) * (args.g_prior_scale / args.g_prior_sigma)
 
-        two_cols = ["g_1", "g_2"]
-        two_labels = [r"$\gamma_1$", r"$\gamma_2$"]
+            two_labels = [r"$\gamma_1$", r"$\gamma_2$"]
 
-        fig = plt.figure(figsize=(7, 7))
-        fig = corner.corner(samples_g, truths=two_truths, labels=two_labels, fig=fig)
-        fig.savefig(os.path.join(out_dir, "radio_corner_g.png"))
-        plt.close()
+            fig = plt.figure(figsize=(7, 7))
+            fig = corner.corner(samples_g, truths=two_truths, labels=two_labels, fig=fig)
+            fig.savefig(os.path.join(out_dir, "radio_corner_g.png"))
+            plt.close()
 
-    print("ESS g1", blackjax.diagnostics.effective_sample_size(samples_["g1"][..., 0]))
-    print("ESS g2", blackjax.diagnostics.effective_sample_size(samples_["g2"][..., 0]))
-    print(
-        "ESS flux", blackjax.diagnostics.effective_sample_size(samples_["flux"][..., 0])
-    )
-    if args.model_profile != "VAE":
-        print(
-            "ESS hlr", blackjax.diagnostics.effective_sample_size(samples_["hlr"][..., 0])
-        )
-        
-        print("ESS e1", blackjax.diagnostics.effective_sample_size(samples_["e1"][..., 0]))
-        print("ESS e2", blackjax.diagnostics.effective_sample_size(samples_["e2"][..., 0]))
+    # Final ESS for all parameters
+    print("ESS at the end of second loop")
     print("ESS at the end of second loop", file=log_file)
-    print(
-        "ESS g1",
-        blackjax.diagnostics.effective_sample_size(samples_["g1"][..., 0]),
-        file=log_file,
-    )
-    print(
-        "ESS g2",
-        blackjax.diagnostics.effective_sample_size(samples_["g2"][..., 0]),
-        file=log_file,
-    )
-    print(
-        "ESS flux",
-        blackjax.diagnostics.effective_sample_size(samples_["flux"][..., 0]),
-        file=log_file,
-    )
-    if args.model_profile != "VAE":
-        print(
-            "ESS hlr",
-            blackjax.diagnostics.effective_sample_size(samples_["hlr"][..., 0]),
-            file=log_file,
-        )
-        print(
-            "ESS e1",
-            blackjax.diagnostics.effective_sample_size(samples_["e1"][..., 0]),
-            file=log_file,
-        )
-        print(
-            "ESS e2",
-            blackjax.diagnostics.effective_sample_size(samples_["e2"][..., 0]),
-            file=log_file,
+    for k in sorted(samples_.keys()):
+        if samples_[k].ndim == 5:  # z/u: (chains, steps, Ngal, d1, d2)
+            ess_vals = [blackjax.diagnostics.effective_sample_size(samples_[k][:, :, gal, 0, 0])
+                        for gal in range(min(args.Ngal, samples_[k].shape[2]))]
+            ess_mean = np.mean(ess_vals)
+            print(f"ESS {k} (mean over galaxies, first component) {ess_mean:.1f}")
+            print(f"ESS {k} (mean over galaxies, first component) {ess_mean:.1f}", file=log_file)
+        else:
+            ess = blackjax.diagnostics.effective_sample_size(samples_[k][..., 0])
+            print(f"ESS {k} {ess:.1f}")
+            print(f"ESS {k} {ess:.1f}", file=log_file)
+
+    if has_shear:
+        flatchain = np.std(samples_["g1"], axis=1) < 1e-4
+        print("Flatchains:")
+        print(flatchain)
+        print("Flatchains:", file=log_file)
+        print(flatchain, file=log_file)
+
+        # Compute posterior density estimation shear samples
+        g1_scaled = samples_["g1"][np.where(flatchain == False),:]
+        g2_scaled = samples_["g2"][np.where(flatchain == False),:]
+        samples_g_scaled = np.concatenate([g1_scaled, g2_scaled], -1).reshape((-1,2)) / args.g_prior_sigma * args.g_prior_scale
+
+        # Fit and save GMM posterior density
+        print("Fitting GMM to shear posterior...")
+        gmm_params = fit_gmm(samples_g_scaled, n_components=5)
+        save_gmm(gmm_params, os.path.join(out_dir, "radio_shear_gmm.npz"))
+        print(f"GMM saved with {len(gmm_params['weights'])} components")
+        print(f"GMM saved with {len(gmm_params['weights'])} components", file=log_file)
+
+        # Save sample-level mean and std (avoids GMM approximation error)
+        g_mean = np.mean(samples_g_scaled, axis=0)
+        g_std = np.std(samples_g_scaled, axis=0)
+        g_cov = np.cov(samples_g_scaled.T)
+        np.savez(
+            os.path.join(out_dir, "radio_samples_stats.npz"),
+            g1_mean=g_mean[0],
+            g2_mean=g_mean[1],
+            g1_std=g_std[0],
+            g2_std=g_std[1],
+            cov=g_cov,
         )
 
-    flatchain = np.std(samples_["g1"], axis=1) < 1e-4
-    print("Flatchains:")
-    print(flatchain)
-    print("Flatchains:", file=log_file)
-    print(flatchain, file=log_file)
-
-    # Compute posterior density estimation shear samples
-    g1_scaled = samples_["g1"][np.where(flatchain == False),:]
-    g2_scaled = samples_["g2"][np.where(flatchain == False),:]
-    samples_g_scaled = np.concatenate([g1_scaled, g2_scaled], -1).reshape((-1,2)) / args.g_sigma * args.g_scale
-    # g_mean = np.mean(samples_g_scaled, axis=0)
-    # g_std = np.sqrt(np.diag(np.cov(samples_g_scaled, rowvar=False)))
-    # print(f"Shear mean: g1={g_mean[0]}, g2={g_mean[1]}")
-    # print(f"Shear std: g1={g_std[0]}, g2={g_std[1]}")
-    # print(f"Shear mean: g1={g_mean[0]}, g2={g_mean[1]}", file=log_file)
-    # print(f"Shear std: g1={g_std[0]}, g2={g_std[1]}", file=log_file)
-    # np.savez(
-    #     os.path.join(out_dir, "radio_shear_stats.npz"),
-    #     g_mean=g_mean,
-    #     g_std=g_std,
-    #     flatchain=flatchain,
-    # )
-
-    # Fit and save GMM posterior density
-    print("Fitting GMM to shear posterior...")
-    gmm_params = fit_gmm(samples_g_scaled, n_components=5)
-    save_gmm(gmm_params, os.path.join(out_dir, "radio_shear_gmm.npz"))
-    print(f"GMM saved with {len(gmm_params['weights'])} components")
-    print(f"GMM saved with {len(gmm_params['weights'])} components", file=log_file)
-
-    if args.save_plots:
-        # Plot GMM contours
-        fig, ax = plt.subplots(1, 1, figsize=(6, 6))
-        plot_gmm_contours(
-            gmm_params, ax=ax,
-            true_g=(args.g1_true, args.g2_true),
-        )
-        ax.set_title("GMM Posterior Density")
-        fig.savefig(os.path.join(out_dir, "gmm_contours.png"), dpi=150, bbox_inches="tight")
-        plt.close(fig)
+        if args.save_plots:
+            fig, ax = plt.subplots(1, 1, figsize=(6, 6))
+            plot_gmm_contours(
+                gmm_params, ax=ax,
+                true_g=(args.g1_true, args.g2_true),
+            )
+            ax.set_title("GMM Posterior Density")
+            fig.savefig(os.path.join(out_dir, "gmm_contours.png"), dpi=150, bbox_inches="tight")
+            plt.close(fig)
 
     # Save samples
     if args.save_samples:
@@ -974,11 +1857,9 @@ def main():
     for key, value in vars(args).items():
         print(f"  {key}: {value}", file=log_file)
 
-    # Save the arguments
-    with open(os.path.join(out_dir, "args.json"), "w") as f:
-        json.dump(vars(args), f, indent=4)
-
     # Save log file
+    t_end = datetime.now()
+    print(f"End: {t_end.strftime('%Y-%m-%d %H:%M:%S')} (elapsed: {t_end - t_start})", file=log_file)
     log_file.close()
 
     print("Done.")

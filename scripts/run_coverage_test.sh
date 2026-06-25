@@ -58,10 +58,8 @@ args=(
     --data_profile spergel
     --g1_true -0.05
     --g2_true 0.05
-    --ell_sigma 1.0
     --ell_scale 0.2
-    --g_sigma 1.0
-    --g_scale 0.1
+
     --antenna_type random
     --n_antenna 15
     --E_lim 40e3
