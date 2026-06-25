@@ -54,16 +54,28 @@ import yaml
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--Ngal", type=int, default=100, help="Number of galaxies")
-    parser.add_argument("--Npx", type=int, default=128, help="Image size in pixels")
+    # Run parameters
     parser.add_argument(
-        "--pixel_scale", type=float, default=0.15, help="Pixel scale in arcsec/pixel"
+        "--seed",
+        type=int,
+        default=None,
+        help="Random seed (default: set seed randomly).",
+    )
+    parser.add_argument(
+        "--id", type=str, default=None, help="Unique identifier for the run."
+    )
+
+    # Scene modelling parameters
+    parser.add_argument("--Ngal", type=int, default=100, help="Number of galaxies.")
+    parser.add_argument("--Npx", type=int, default=128, help="Image size in pixels.")
+    parser.add_argument(
+        "--pixel_scale", type=float, default=0.15, help="Pixel scale in arcsec/pixel."
     )
     parser.add_argument(
         "--noise_uv",
         type=float,
         default=0.004,
-        help="UV noise level for the model likelihood (and for data generation when --noise_data is not set)",
+        help="UV noise level for the model likelihood (and for data generation when --noise_data is not set).",
     )
     parser.add_argument(
         "--noise_data",
@@ -75,143 +87,174 @@ def main():
         "--trecs_data_path",
         type=str,
         default=None,
-        help="Galaxy, hlr and flux fit over the TRECS catalog (trecs_gal_params.npy)",
+        help="Galaxy, hlr and flux fit over the TRECS catalog (trecs_gal_params.npy).",
     )
     parser.add_argument(
         "--deepshape_data_path",
         type=str,
         default=None,
-        help="Path to the DeepShape dataset (val_set_rivi.h5)",
+        help="Path to the DeepShape dataset (val_set_rivi.h5).",
     )
     parser.add_argument(
         "--cosmos_data_path",
         type=str,
         default=None,
-        help="Path to the COSMOS dataset 23.5 (for real galaxy images)",
+        help="Path to the COSMOS dataset 23.5 (for real galaxy images).",
     )
     parser.add_argument(
         "--cosmos_sample",
         type=str,
         default="23.5",
-        help="COSMOS dataset sample to use: 23.5 or 25.2",
+        help="COSMOS dataset sample to use: 23.5 or 25.2.",
     )
     parser.add_argument(
         "--mag_cut",
         type=float,
         default=None,
-        help="Optional magnitude cut for COSMOS sample",
+        help="Optional magnitude cut for COSMOS sample.",
     )
     parser.add_argument(
         "--data_profile",
         type=str,
         default="exp",
-        help="Galaxy dataset profile type: exp, sersic, spergel or real",
+        help="Galaxy dataset profile type: exp, sersic, spergel, real or VAE.",
     )
     parser.add_argument(
-        "--g1_true", type=float, default=-0.05, help="True g1 shear value"
+        "--g1_true", type=float, default=-0.05, help="True g1 shear value."
     )
     parser.add_argument(
-        "--g2_true", type=float, default=0.05, help="True g2 shear value"
+        "--g2_true", type=float, default=0.05, help="True g2 shear value."
     )
     parser.add_argument(
         "--ell_scale",
         type=float,
         default=0.2,
-        help="Ellipticity scale for data generation",
+        help="Ellipticity scale for data generation.",
     )
-    parser.add_argument("--sersic_index", type=float, default=None, help="Sersic index")
+    parser.add_argument(
+        "--sersic_index",
+        type=float,
+        default=None,
+        help="Sersic index or nu if Spergel profil.",
+    )
+    parser.add_argument(
+        "--data_vae_path",
+        type=str,
+        default=None,
+        help="Path to a AE for data generation when --data_profile=VAE. Falls back to --vae_path if not set (must have a trained encoder).",
+    )
+    parser.add_argument(
+        "--data_vae_epoch",
+        type=int,
+        default=None,
+        help="Epoch of the data-generation AE. Falls back to --vae_epoch if not set.",
+    )
+
+    # Radio PSF parameters
     parser.add_argument(
         "--antenna_type",
         type=str,
         default="random",
-        help="Antenna type: random or file",
+        help="Antenna type: random or file.",
     )
     parser.add_argument(
         "--antenna_file",
         type=str,
         default=None,
-        help="Path to antenna file if antenna_type is file",
+        help="Path to antenna file if antenna_type is file.",
     )
     parser.add_argument(
         "--uv_mask_weighting",
         type=str,
         default="binary",
-        help="UV weighting: binary or histogram",
+        help="UV weighting: binary or histogram.",
     )
-    parser.add_argument("--n_antenna", type=int, default=50, help="Number of antennas")
-    parser.add_argument("--E_lim", type=float, default=50e3, help="East limit")
-    parser.add_argument("--N_lim", type=float, default=50e3, help="North limit")
-    parser.add_argument("--track_time", type=float, default=10, help="Track time")
-    parser.add_argument("--t0", type=float, default=0, help="Start time")
-    parser.add_argument("--n_times", type=int, default=4, help="Number of times")
-    parser.add_argument("--f", type=float, default=1.4e9, help="Frequency")
+    parser.add_argument("--n_antenna", type=int, default=50, help="Number of antennas.")
+    parser.add_argument("--E_lim", type=float, default=50e3, help="East limit.")
+    parser.add_argument("--N_lim", type=float, default=50e3, help="North limit.")
+    parser.add_argument("--track_time", type=float, default=10, help="Track time.")
+    parser.add_argument("--t0", type=float, default=0, help="Start time.")
+    parser.add_argument("--n_times", type=int, default=4, help="Number of times.")
+    parser.add_argument("--f", type=float, default=1.4e9, help="Frequency.")
     parser.add_argument("--df", type=float, default=None, help="Frequency bandwidth")
     parser.add_argument(
         "--array_lat",
         type=float,
         default=-30,
-        help="Latitude of the array in degrees (used for UV mask generation)",
+        help="Latitude of the array in degrees (used for UV mask generation).",
     )
     parser.add_argument(
         "--array_dec",
         type=float,
         default=-30,
-        help="Declination of the target field in degrees (used for UV mask generation)",
+        help="Declination of the target field in degrees (used for UV mask generation).",
     )
     parser.add_argument(
-        "--n_freqs", type=int, default=1, help="Number of frequency channels"
+        "--n_freqs", type=int, default=1, help="Number of frequency channels."
     )
     parser.add_argument(
         "--radio_array_seed",
         type=int,
         default=123,
-        help="Random seed for the radio array generation",
+        help="Random seed for the radio array generation.",
     )
+
+    # Galaxy generative model parameters
     parser.add_argument(
         "--model_profile",
         type=str,
         default="exp",
-        help="Model profile type: exp, spergel or VAE",
+        help="Model profile type: exp, spergel or VAE (for realistic galaxy images).",
     )
     parser.add_argument(
-        "--ell_prior_sigma", type=float, default=1.0, help="Ellipticity prior sigma"
+        "--ell_prior_sigma",
+        type=float,
+        default=1.0,
+        help="Ellipticity samples range (non-physical).",
     )
     parser.add_argument(
-        "--ell_prior_scale", type=float, default=0.2, help="Ellipticity prior scale"
+        "--ell_prior_scale", type=float, default=0.2, help="Ellipticity prior scale."
     )
     parser.add_argument(
-        "--g_prior_sigma", type=float, default=1.0, help="Shear prior sigma"
+        "--g_prior_sigma",
+        type=float,
+        default=1.0,
+        help="Shear samples range (non-physical).",
     )
     parser.add_argument(
-        "--g_prior_scale", type=float, default=0.1, help="Shear prior scale"
+        "--g_prior_scale", type=float, default=0.1, help="Shear prior scale."
     )
     parser.add_argument(
         "--hlr_prior_sigma",
         type=float,
         default=1.0,
-        help="Half-light radius prior sigma",
+        help="Half-light radius samples range (non-physical).",
     )
     parser.add_argument(
-        "--hlr_prior_min", type=float, default=0.1, help="Half-light radius prior min"
+        "--hlr_prior_min", type=float, default=0.1, help="Half-light radius prior min."
     )
     parser.add_argument(
-        "--hlr_prior_max", type=float, default=3.0, help="Half-light radius prior max"
+        "--hlr_prior_max", type=float, default=3.0, help="Half-light radius prior max."
     )
     parser.add_argument(
-        "--flux_prior_sigma", type=float, default=1.0, help="Flux prior sigma"
+        "--flux_prior_sigma",
+        type=float,
+        default=1.0,
+        help="Flux samples range (non-physical).",
     )
     parser.add_argument(
-        "--flux_prior_min", type=float, default=0.03, help="Flux prior min"
+        "--flux_prior_min", type=float, default=0.03, help="Flux prior min."
     )
     parser.add_argument(
-        "--flux_prior_max", type=float, default=0.25, help="Flux prior max"
+        "--flux_prior_max", type=float, default=0.25, help="Flux prior max."
     )
     parser.add_argument(
         "--composite_flux_ratio_max",
         type=float,
         default=4.0,
-        help="Max disk/bulge flux ratio for composite model",
+        help="Max disk/bulge flux ratio for composite model.",
     )
+    # Autoencoder parameters
     parser.add_argument(
         "--latent_dim",
         type=int,
@@ -228,25 +271,19 @@ def main():
         "--latent_sigma",
         type=float,
         default=1.0,
-        help="Latent space sampling sigma (rescaled back to physical scale).",
+        help="Latent space sampling sigma.",
     )
     parser.add_argument(
-        "--vae_path", type=str, default=None, help="Path to the trained VAE model."
-    )
-    parser.add_argument(
-        "--vae_epoch", type=int, default=None, help="Epoch of the trained VAE model."
-    )
-    parser.add_argument(
-        "--data_vae_path",
+        "--vae_path",
         type=str,
         default=None,
-        help="Path to a (full, non-distilled) AE for data generation when --data_profile=VAE. Falls back to --vae_path if not set. Must have a trained encoder.",
+        help="Path to the trained autoencoder model.",
     )
     parser.add_argument(
-        "--data_vae_epoch",
+        "--vae_epoch",
         type=int,
         default=None,
-        help="Epoch of the data-generation AE. Falls back to --vae_epoch if not set.",
+        help="Epoch of the trained autoencoder model.",
     )
     parser.add_argument(
         "--vae_model_inference_mode",
@@ -290,31 +327,26 @@ def main():
         help="Epoch of the trained flow model checkpoint.",
     )
     parser.add_argument(
-        "--flow_condition",
-        type=float,
-        nargs=3,
-        default=[21.69, 15.90, 0.60],
-        help="Fixed conditioning values [mag_auto, flux_radius, zphot] for the flow.",
-    )
-    parser.add_argument(
         "--pixel_scale_vae",
         type=float,
         default=0.03,
         help="Pixel scale for VAE images, default: HST pixel scale (0.03 arcsec/pixel).",
     )
+
+    # MAP initialisation parameters
     parser.add_argument("--lr_map", type=float, default=1e-2, help="MAP learning rate")
     parser.add_argument(
         "--lr_map_shear_factor",
         type=float,
         default=1.0,
-        help="Multiplier for g1,g2 learning rate relative to lr_map",
+        help="Multiplier for g1,g2 learning rate relative to lr_map.",
     )
     parser.add_argument(
         "--map_optimizer",
         type=str,
         default="adam",
         choices=["adam", "adafactor"],
-        help="Optimizer for MAP estimation",
+        help="Optimizer for MAP estimation.",
     )
     parser.add_argument(
         "--n_steps_map", type=int, default=5000, help="Number of steps for MAP"
@@ -323,7 +355,13 @@ def main():
         "--n_steps_map_freeze_shear",
         type=int,
         default=0,
-        help="Initial MAP steps with g1,g2 frozen (optimize only u/flux, 0=disabled)",
+        help="Initial MAP steps with g1,g2 frozen (optimize only u/flux, 0=disabled).",
+    )
+    parser.add_argument(
+        "--precomputed_map",
+        action="store_true",
+        default=False,
+        help="Load MAP values from output dir instead of re-running MAP.",
     )
     parser.add_argument(
         "--g_chains_init",
@@ -343,48 +381,50 @@ def main():
         "--point_estimate",
         action="store_true",
         default=False,
-        help="Stop after MAP: save g1,g2 estimates and exit (no MCMC)",
+        help="Stop after MAP: save g1,g2 estimates and exit (no MCMC).",
     )
     # DEBUG ONLY — remove this flag once z mixing is validated
     parser.add_argument(
         "--no_shear",
         action="store_true",
         default=False,
-        help="[DEBUG] Disable shear (g1=g2=0) to test z/flux sampling in isolation",
+        help="[DEBUG] Disable shear (g1=g2=0) to test z/flux sampling in isolation.",
     )
+
+    # Sampler parameters
     parser.add_argument(
         "--sampler",
         type=str,
         default="ghmc",
         choices=["ghmc", "mclmc", "gibbs"],
-        help="Sampler to use: ghmc, mclmc, or gibbs (Gibbs block sampler)",
+        help="Sampler to use: ghmc, mclmc, or gibbs (Gibbs block sampler).",
     )
     parser.add_argument(
         "--n_gibbs_g_steps",
         type=int,
         default=10,
-        help="MCLMC steps per Gibbs g-block iteration",
+        help="MCLMC steps per Gibbs g-block iteration.",
     )
     parser.add_argument(
         "--n_gibbs_z_steps",
         type=int,
         default=50,
-        help="MCLMC steps per Gibbs z-block iteration",
+        help="MCLMC steps per Gibbs z-block iteration.",
     )
     parser.add_argument(
         "--n_warmup_g",
         type=int,
         default=5000,
-        help="Warmup steps for g-block MCLMC adaptation (2D, much shorter than z-block)",
+        help="Warmup steps for g-block MCLMC adaptation (2D, much shorter than z-block).",
     )
     parser.add_argument(
-        "--n_warmup", type=int, default=5000, help="Number of warmup steps for MEADS"
+        "--n_warmup", type=int, default=5000, help="Number of warmup steps for MEADS."
     )
     parser.add_argument(
-        "--num_chains", type=int, default=10, help="Number of chains for HMC"
+        "--num_chains", type=int, default=10, help="Number of chains for HMC."
     )
     parser.add_argument(
-        "--step_size", type=float, default=None, help="Step size for HMC"
+        "--step_size", type=float, default=None, help="Step size for HMC."
     )
     parser.add_argument(
         "--mclmc_L",
@@ -409,58 +449,48 @@ def main():
         "Overrides --mclmc_inv_mass_shear. Use with --mclmc_L and --step_size to skip adaptation.",
     )
     parser.add_argument(
-        "--num", type=int, default=20, help="Number of batch iterations"
+        "--num", type=int, default=20, help="Number of batch iterations."
     )
     parser.add_argument(
         "--num_steps", type=int, default=10000, help="Number of steps for sampling"
+    )
+
+    # Output parameters
+    parser.add_argument(
+        "--output_dir",
+        type=str,
+        default="../outputs",
+        help="Directory to save outputs.",
     )
     parser.add_argument(
         "--save_samples",
         action="store_true",
         default=False,
-        help="Save MCMC samples (.npz)",
+        help="Save MCMC samples (.npz).",
     )
     parser.add_argument(
         "--save_plots",
         action="store_true",
         default=False,
-        help="Save diagnostic plots (.png)",
+        help="Save diagnostic plots (.png).",
     )
     parser.add_argument(
         "--save_data",
         action="store_true",
         default=False,
-        help="Save intermediate data (radio_data.npy, radio_psf_mask.npy, radio_init_val.npy, radio_map_val.npy)",
-    )
-    parser.add_argument(
-        "--precomputed_map",
-        action="store_true",
-        default=False,
-        help="Load MAP values from output dir instead of re-running MAP",
-    )
-    parser.add_argument(
-        "--seed",
-        type=int,
-        default=None,
-        help="Random seed (default: set seed randomly)",
-    )
-    parser.add_argument(
-        "--id", type=str, default=None, help="Unique identifier for the run"
-    )
-    parser.add_argument(
-        "--output_dir", type=str, default="../outputs", help="Directory to save outputs"
-    )
-    parser.add_argument(
-        "--args",
-        type=str,
-        default=None,
-        help="Absolute path to a json file with arguments",
+        help="Save intermediate data (radio_data.npy, radio_psf_mask.npy, radio_init_val.npy, radio_map_val.npy).",
     )
     parser.add_argument(
         "--plot_chains",
         type=str,
         default="both",
         help="Plot chains: samples, scaled, both or none. Default: both.",
+    )
+    parser.add_argument(
+        "--args",
+        type=str,
+        default=None,
+        help="Absolute path to a json file with arguments.",
     )
 
     args = parser.parse_args()
