@@ -396,26 +396,8 @@ def main():
         "--sampler",
         type=str,
         default="ghmc",
-        choices=["ghmc", "mclmc", "gibbs"],
-        help="Sampler to use: ghmc, mclmc, or gibbs (Gibbs block sampler).",
-    )
-    parser.add_argument(
-        "--n_gibbs_g_steps",
-        type=int,
-        default=10,
-        help="MCLMC steps per Gibbs g-block iteration.",
-    )
-    parser.add_argument(
-        "--n_gibbs_z_steps",
-        type=int,
-        default=50,
-        help="MCLMC steps per Gibbs z-block iteration.",
-    )
-    parser.add_argument(
-        "--n_warmup_g",
-        type=int,
-        default=5000,
-        help="Warmup steps for g-block MCLMC adaptation (2D, much shorter than z-block).",
+        choices=["ghmc", "mclmc"],
+        help="Sampler to use: ghmc or mclmc.",
     )
     parser.add_argument(
         "--n_warmup", type=int, default=5000, help="Number of warmup steps for MEADS."
@@ -558,22 +540,15 @@ def main():
     )
 
     if args.save_plots:
-        plt.subplots(1, 3, figsize=(12, 4))
-        plt.subplot(131)
+        # Plot radio UV mask and PSF
+        plt.subplots(1, 2, figsize=(8, 4))
+        plt.subplot(121)
         plt.imshow(np.real(mask))
         plt.title("UV mask")
         plt.colorbar()
-        plt.subplot(132)
+        plt.subplot(122)
         plt.imshow(psf)
         plt.title("Radio PSF")
-        plt.colorbar()
-        plt.subplot(133)
-        plt.imshow(
-            galsim.Gaussian(flux=1.0, sigma=0.2)
-            .drawImage(nx=args.Npx, ny=args.Npx, scale=args.pixel_scale)
-            .array
-        )
-        plt.title("Gaussian PSF")
         plt.colorbar()
         plt.savefig(os.path.join(out_dir, "radio_psf.png"))
 
@@ -598,12 +573,12 @@ def main():
             args.noise_data if args.noise_data is not None else args.noise_uv
         )
 
-        # Load the data-generation AE (with trained encoder) when
-        # --data_profile=VAE. Falls back to the model AE path/epoch if the
-        # data-specific args are not set. The encoder is needed, so make sure
-        # the path points to a non-distilled checkpoint.
         data_ae = None
         if args.data_profile == "VAE":
+            # Load the data-generation AE (with trained encoder) when
+            # --data_profile=VAE. Falls back to the model AE path/epoch if the
+            # data-specific args are not set. The encoder is needed, so make sure
+            # the path points to a non-distilled checkpoint.
             data_vae_path = args.data_vae_path if args.data_vae_path else args.vae_path
             data_vae_epoch = (
                 args.data_vae_epoch
@@ -626,6 +601,7 @@ def main():
             data_ae = load_galaxy_autoencoder(Path(data_vae_path), epoch=data_vae_epoch)
             data_ae = eqx.nn.inference_mode(data_ae, True)
 
+        # Initialise the data generator and generate the observations.
         model_data_gen = partial(
             gen_gal_dataset,
             Ngal=args.Ngal,
@@ -1233,16 +1209,18 @@ def main():
         # plt.show()
         plt.savefig(os.path.join(out_dir, "radio_initial_guess.png"))
 
-    # Use the the MEADS algorithm for parallel chains on GPUs
-    """
-    - https://proceedings.mlr.press/v151/hoffman22a/hoffman22a.pdf
-    - https://blackjax-devs.github.io/blackjax/autoapi/blackjax/adaptation/meads_adaptation/index.html
-    - https://blackjax-devs.github.io/blackjax/autoapi/blackjax/mcmc/ghmc/index.html
-    """
+    # Initialise sampling
 
     key_warmup, key_sample = jax.random.split(key)
 
     if args.sampler == "ghmc":
+        # Use the the MEADS algorithm for parallel chains on GPUs
+        """
+        - https://proceedings.mlr.press/v151/hoffman22a/hoffman22a.pdf
+        - https://blackjax-devs.github.io/blackjax/autoapi/blackjax/adaptation/meads_adaptation/index.html
+        - https://blackjax-devs.github.io/blackjax/autoapi/blackjax/mcmc/ghmc/index.html
+        """
+
         print("Using GHMC sampler with MEADS adaptation", file=log_file)
         warmup = blackjax.meads_adaptation(
             log_prob_fn,
@@ -1782,366 +1760,113 @@ def main():
         # Initialize all chains with tuned kernel
         last_states = jax.vmap(kernel.init)(init_val, key_init_chains)
 
-        # kernel = blackjax.mclmc(log_prob_fn, step_size=1e-3)
-        # state = kernel.init(init_val)
-
-        # da_init, da_update, da_final = blackjax.dual_averaging(
-        #     initial_step_size=1e-3,
-        #     target_acceptance_rate=None,
-        # )
-
-        # da_state = da_init()
-
-        # for _ in range(args.n_warmup):
-        #     key_warmup, subkey = jax.random.split(key_warmup)
-        #     new_state, info = kernel.step(subkey, state)
-        #     log_energy_change = info.log_kinetic_energy_change
-        #     da_state = da_update(da_state, log_energy_change)
-        #     state = new_state
-
-        # step_size = da_final(da_state)
-        # print("Step size:", step_size)
-        # print(f"Step size: {step_size}", file=log_file)
-
-        # kernel = blackjax.mclmc(log_prob_fn, step_size=step_size)
-
-    elif args.sampler == "gibbs":
-        # ── Gibbs block sampler ──────────────────────────────────────────────
-        # Alternates between:
-        #   g-block : sample {g1, g2} (2D) with z/flux fixed
-        #   z-block : sample {z/u, flux} (~1700D) with g1/g2 fixed
-        # Both blocks use MCLMC with independently adapted L/step_size.
-        from blackjax.mcmc.mclmc import build_kernel as mclmc_build_kernel
-        from blackjax.mcmc.integrators import isokinetic_mclachlan, IntegratorState
-
-        G_KEYS = {"g1", "g2"}
-
-        def split_params(params):
-            g_p = {k: v for k, v in params.items() if k in G_KEYS}
-            z_p = {k: v for k, v in params.items() if k not in G_KEYS}
-            return g_p, z_p
-
-        key_init, key_tune_g, key_tune_z = jax.random.split(key_warmup, 3)
-        key_init_chains = jax.random.split(key_init, args.num_chains)
-
-        first_chain = jax.tree.map(lambda x: x[0], init_val)
-        g_init_first, z_init_first = split_params(first_chain)
-
-        ndim_g = sum(v.size for v in jax.tree.leaves(g_init_first))
-        ndim_z = sum(v.size for v in jax.tree.leaves(z_init_first))
-        print(f"Gibbs blocks: g-block={ndim_g}D, z-block={ndim_z}D")
-        print(f"Gibbs blocks: g-block={ndim_g}D, z-block={ndim_z}D", file=log_file)
-
-        # Conditioning log-probs for adaptation (fixed at MAP values)
-        def make_log_prob_g(z_cond):
-            def lp(g_p):
-                return log_prob_fn({**g_p, **z_cond})
-
-            return lp
-
-        def make_log_prob_z(g_cond):
-            def lp(z_p):
-                return log_prob_fn({**g_cond, **z_p})
-
-            return lp
-
-        log_prob_g_adapt = make_log_prob_g(z_init_first)
-        log_prob_z_adapt = make_log_prob_z(g_init_first)
-
-        L_g0 = jnp.sqrt(float(ndim_g))
-        ss_g0 = L_g0 / ndim_g
-        L_z0 = jnp.sqrt(float(ndim_z))
-        ss_z0 = L_z0 / ndim_z
-
-        # --- Adapt g-block (NUTS with window adaptation) ---
-        # MCLMC performs poorly in 2D; NUTS with dual-averaging is far more robust.
-        print(f"Adapting g-block NUTS (n_warmup_g={args.n_warmup_g})...")
-        warmup_g = blackjax.window_adaptation(
-            blackjax.nuts, log_prob_g_adapt, initial_step_size=ss_g0
-        )
-        (_, g_nuts_params), _ = warmup_g.run(
-            key_tune_g, g_init_first, num_steps=args.n_warmup_g
-        )
-        ss_g = g_nuts_params["step_size"]
-        inv_mass_g = g_nuts_params["inverse_mass_matrix"]
-        print(f"g-block NUTS adapted: step_size={ss_g:.4f}")
-        print(f"g-block NUTS adapted: step_size={ss_g:.4f}", file=log_file)
-
-        # --- Adapt z-block ---
-        print(f"Adapting z-block MCLMC (n_warmup={args.n_warmup})...")
-        tmp_z = blackjax.mclmc(log_prob_z_adapt, step_size=ss_z0, L=L_z0)
-        z_state_adapt = tmp_z.init(z_init_first, key_init_chains[0])
-
-        def z_factory(inv_mass):
-            return mclmc_build_kernel(log_prob_z_adapt, inv_mass, isokinetic_mclachlan)
-
-        for attempt in range(10):
-            _, z_params, _ = mclmc_adj.mclmc_find_L_and_step_size(
-                mclmc_kernel=z_factory,
-                num_steps=args.n_warmup,
-                state=z_state_adapt,
-                rng_key=jax.random.fold_in(key_tune_z, attempt),
-            )
-            if z_params.step_size > 0 and z_params.L > 0:
-                break
-            print(f"z-block adaptation attempt {attempt+1} failed, retrying...")
-        L_z, ss_z = z_params.L, z_params.step_size
-        inv_mass_z = z_params.inverse_mass_matrix
-        print(f"z-block adapted: L={L_z:.3f}, step_size={ss_z:.4f}")
-        print(f"z-block adapted: L={L_z:.3f}, step_size={ss_z:.4f}", file=log_file)
-
-        # --- Initialize all chains ---
-        g_init_all = {k: init_val[k] for k in G_KEYS}
-        z_init_all = {k: v for k, v in init_val.items() if k not in G_KEYS}
-
-        nuts_kernel_g = blackjax.nuts(
-            log_prob_g_adapt, step_size=ss_g, inverse_mass_matrix=inv_mass_g
-        )
-        tmp_z_full = blackjax.mclmc(
-            log_prob_z_adapt, step_size=ss_z, L=L_z, inverse_mass_matrix=inv_mass_z
-        )
-        last_g_states = jax.vmap(nuts_kernel_g.init)(g_init_all)
-        last_z_states = jax.vmap(tmp_z_full.init)(z_init_all, key_init_chains)
-
-        # --- JIT-compiled block step functions ---
-        # conditioning_params flows as a traced JAX argument so no retrace on
-        # repeated calls with different values of the same shape/dtype.
-        @jax.jit
-        def run_g_block(g_state, z_cond, keys):
-            """n_gibbs_g_steps NUTS steps on g given fixed z_cond."""
-
-            def lp_g(g):
-                return log_prob_fn({**g, **z_cond})
-
-            # Refresh logdensity/grad for current z conditioning
-            new_ld, new_grad = jax.value_and_grad(lp_g)(g_state.position)
-            g_state_fresh = g_state._replace(
-                logdensity=new_ld, logdensity_grad=new_grad
-            )
-            nuts_kern = blackjax.nuts(
-                lp_g, step_size=ss_g, inverse_mass_matrix=inv_mass_g
-            )
-
-            def step(s, k):
-                return nuts_kern.step(k, s)
-
-            return jax.lax.scan(step, g_state_fresh, keys)
-
-        @jax.jit
-        def run_z_block(z_state, g_cond, keys):
-            """n_gibbs_z_steps MCLMC steps on z given fixed g_cond."""
-
-            def lp_z(z):
-                return log_prob_fn({**g_cond, **z})
-
-            new_ld, new_grad = jax.value_and_grad(lp_z)(z_state.position)
-            z_state_fresh = IntegratorState(
-                z_state.position, z_state.momentum, new_ld, new_grad
-            )
-            z_kern = mclmc_build_kernel(lp_z, inv_mass_z, isokinetic_mclachlan)
-
-            def step(s, k):
-                return z_kern(k, s, L_z, ss_z)
-
-            return jax.lax.scan(step, z_state_fresh, keys)
-
     else:
-        raise ValueError("Sampler not recognized. Use ghmc, mclmc, or gibbs.")
+        raise ValueError("Sampler not recognized. Use ghmc or mclmc.")
 
-    if args.sampler == "gibbs":
-        # === GIBBS SAMPLING LOOP ===
-        # Alternates g-block (2D) and z-block MCLMC; one merged sample per outer iter.
-        print(f"Number of chains: {args.num_chains}", file=log_file)
-        print(f"Number of Gibbs iterations: {args.num * 2}", file=log_file)
-        print(f"g-block steps/iter: {args.n_gibbs_g_steps}", file=log_file)
-        print(f"z-block steps/iter: {args.n_gibbs_z_steps}", file=log_file)
+    # === GHMC / MCLMC SAMPLING LOOP ===
+    @partial(jax.jit, static_argnames=("num_steps",))
+    def run_hmc(init_states, key, num_steps=1):
 
-        sample_list = []
-        key_gibbs = key_sample
+        def make_step(state, key):
+            state, info = kernel.step(key, state)
+            return state, (state, info)
 
-        for i in range(args.num * 2):
-            key_gibbs, k_g_all, k_z_all = jax.random.split(key_gibbs, 3)
-            # Per-chain sub-step keys: shape (num_chains, n_steps, 2)
-            keys_g = jax.vmap(lambda k: jax.random.split(k, args.n_gibbs_g_steps))(
-                jax.random.split(k_g_all, args.num_chains)
+        keys = jax.random.split(key, num_steps)
+        last_states, (samples, info) = jax.lax.scan(make_step, init_states, keys)
+
+        return last_states, (samples, info)
+
+    # loop over lax.scan to save GPU memory
+    print(f"Number of chains: {args.num_chains}", file=log_file)
+    print(f"Number of loops: {args.num}", file=log_file)
+    print(f"Number of steps: {args.num_steps}", file=log_file)
+    print(f"Number of samples per chain: {args.num_steps*args.num*2}", file=log_file)
+
+    key_chains = jax.random.split(key_sample, args.num_chains)
+
+    last_states, _ = jax.vmap(lambda init_states, keys: run_hmc(init_states, keys, 1))(
+        last_states, key_chains
+    )
+
+    sample_list = []
+
+    keys = jax.vmap(jax.random.split, in_axes=(0, None))(key_chains, 2 * args.num)
+
+    for i in range(args.num):
+        print("Chain", i + 1, "of", 2 * args.num, "running...")
+        last_states, (samples, info) = jax.vmap(
+            lambda init_states, keys: run_hmc(init_states, keys, args.num_steps)
+        )(last_states, keys[:, i, :])
+        sample_list.append(samples)
+
+        # Quick diagnostics: sampler health and shear chain statistics.
+        # MCLMC info has no acceptance_rate; energy_change measures integrator accuracy.
+        # GHMC info has acceptance_rate directly (target > 0.6).
+        if args.sampler == "mclmc":
+            sampler_diag = (
+                f"mean|energy_change|={float(jnp.abs(info.energy_change).mean()):.3f}"
             )
-            keys_z = jax.vmap(lambda k: jax.random.split(k, args.n_gibbs_z_steps))(
-                jax.random.split(k_z_all, args.num_chains)
+        else:
+            sampler_diag = f"accept={float(info.acceptance_rate.mean()):.3f}"
+        diag = f"  {sampler_diag}"
+        if has_shear:
+            g1_mean = float(samples.position["g1"].mean()) * g_rescale
+            g1_std = float(samples.position["g1"].std()) * g_rescale
+            g2_mean = float(samples.position["g2"].mean()) * g_rescale
+            g2_std = float(samples.position["g2"].std()) * g_rescale
+            diag += (
+                f" | g1={g1_mean:.4f}±{g1_std:.4f}" f" | g2={g2_mean:.4f}±{g2_std:.4f}"
             )
+        print(diag)
+        print(diag, file=log_file)
 
-            # G-block: sample g1/g2 with z/flux fixed at current last_z_states
-            last_g_states, _ = jax.vmap(run_g_block)(
-                last_g_states, last_z_states.position, keys_g
-            )
-            # Z-block: sample z/flux with g1/g2 fixed at current last_g_states
-            last_z_states, _ = jax.vmap(run_z_block)(
-                last_z_states, last_g_states.position, keys_z
-            )
-
-            # Store merged position: one sample per chain per outer iter
-            merged = {**last_g_states.position, **last_z_states.position}
-            sample_list.append(merged)
-
-            g1_mean = float(last_g_states.position["g1"].mean()) * g_rescale
-            g1_std = float(last_g_states.position["g1"].std()) * g_rescale
-            g2_mean = float(last_g_states.position["g2"].mean()) * g_rescale
-            g2_std = float(last_g_states.position["g2"].std()) * g_rescale
-            diag = (
-                f"  Gibbs {i+1}/{args.num*2} | "
-                f"g1={g1_mean:.4f}±{g1_std:.4f} | "
-                f"g2={g2_mean:.4f}±{g2_std:.4f}"
-            )
-            print(diag)
-            print(diag, file=log_file)
-
-            # Midpoint ESS check
-            if i + 1 == args.num:
-                mid_s = {
-                    k: np.stack(
-                        [np.asarray(sample_list[j][k]) for j in range(args.num)], axis=1
+    samples_ = {
+        key: np.concatenate([sample_list[k].position[key] for k in range(args.num)], 1)
+        for key in last_states.position
+    }
+    # Print ESS for all parameters
+    print("ESS at the end of first loop")
+    print("ESS at the end of first loop", file=log_file)
+    for k in sorted(samples_.keys()):
+        if samples_[k].ndim >= 3 and samples_[k].shape[-1] > 1:
+            # Multi-dimensional param (e.g. z, flux per galaxy): report mean ESS over first component
+            if samples_[k].ndim == 5:  # z: (chains, steps, Ngal, d1, d2)
+                ess_vals = [
+                    blackjax.diagnostics.effective_sample_size(
+                        samples_[k][:, :, gal, 0, 0]
                     )
-                    for k in sample_list[0]
-                }
+                    for gal in range(min(args.Ngal, samples_[k].shape[2]))
+                ]
+                ess_mean = np.mean(ess_vals)
+                print(f"ESS {k} (mean over galaxies, first component) {ess_mean:.1f}")
                 print(
-                    "ESS g1 (midpoint)",
-                    blackjax.diagnostics.effective_sample_size(mid_s["g1"][..., 0]),
-                )
-                print(
-                    "ESS g2 (midpoint)",
-                    blackjax.diagnostics.effective_sample_size(mid_s["g2"][..., 0]),
-                )
-                print("ESS at midpoint", file=log_file)
-                print(
-                    "ESS g1",
-                    blackjax.diagnostics.effective_sample_size(mid_s["g1"][..., 0]),
+                    f"ESS {k} (mean over galaxies, first component) {ess_mean:.1f}",
                     file=log_file,
                 )
-                print(
-                    "ESS g2",
-                    blackjax.diagnostics.effective_sample_size(mid_s["g2"][..., 0]),
-                    file=log_file,
-                )
-
-        # Build samples_: shape (num_chains, num*2, *param_shape)
-        samples_ = {
-            k: np.stack(
-                [np.asarray(sample_list[i][k]) for i in range(args.num * 2)], axis=1
-            )
-            for k in sample_list[0]
-        }
-
-    else:
-        # === GHMC / MCLMC SAMPLING LOOP ===
-        @partial(jax.jit, static_argnames=("num_steps",))
-        def run_hmc(init_states, key, num_steps=1):
-
-            def make_step(state, key):
-                state, info = kernel.step(key, state)
-                return state, (state, info)
-
-            keys = jax.random.split(key, num_steps)
-            last_states, (samples, info) = jax.lax.scan(make_step, init_states, keys)
-
-            return last_states, (samples, info)
-
-        # loop over lax.scan to save GPU memory
-        print(f"Number of chains: {args.num_chains}", file=log_file)
-        print(f"Number of loops: {args.num}", file=log_file)
-        print(f"Number of steps: {args.num_steps}", file=log_file)
-        print(
-            f"Number of samples per chain: {args.num_steps*args.num*2}", file=log_file
-        )
-
-        key_chains = jax.random.split(key_sample, args.num_chains)
-
-        last_states, _ = jax.vmap(
-            lambda init_states, keys: run_hmc(init_states, keys, 1)
-        )(last_states, key_chains)
-
-        sample_list = []
-
-        keys = jax.vmap(jax.random.split, in_axes=(0, None))(key_chains, 2 * args.num)
-
-        for i in range(args.num):
-            print("Chain", i + 1, "of", 2 * args.num, "running...")
-            last_states, (samples, info) = jax.vmap(
-                lambda init_states, keys: run_hmc(init_states, keys, args.num_steps)
-            )(last_states, keys[:, i, :])
-            sample_list.append(samples)
-
-            # Quick diagnostics: sampler health and shear chain statistics.
-            # MCLMC info has no acceptance_rate; energy_change measures integrator accuracy.
-            # GHMC info has acceptance_rate directly (target > 0.6).
-            if args.sampler == "mclmc":
-                sampler_diag = f"mean|energy_change|={float(jnp.abs(info.energy_change).mean()):.3f}"
-            else:
-                sampler_diag = f"accept={float(info.acceptance_rate.mean()):.3f}"
-            diag = f"  {sampler_diag}"
-            if has_shear:
-                g1_mean = float(samples.position["g1"].mean()) * g_rescale
-                g1_std = float(samples.position["g1"].std()) * g_rescale
-                g2_mean = float(samples.position["g2"].mean()) * g_rescale
-                g2_std = float(samples.position["g2"].std()) * g_rescale
-                diag += (
-                    f" | g1={g1_mean:.4f}±{g1_std:.4f}"
-                    f" | g2={g2_mean:.4f}±{g2_std:.4f}"
-                )
-            print(diag)
-            print(diag, file=log_file)
-
-        samples_ = {
-            key: np.concatenate(
-                [sample_list[k].position[key] for k in range(args.num)], 1
-            )
-            for key in last_states.position
-        }
-        # Print ESS for all parameters
-        print("ESS at the end of first loop")
-        print("ESS at the end of first loop", file=log_file)
-        for k in sorted(samples_.keys()):
-            if samples_[k].ndim >= 3 and samples_[k].shape[-1] > 1:
-                # Multi-dimensional param (e.g. z, flux per galaxy): report mean ESS over first component
-                if samples_[k].ndim == 5:  # z: (chains, steps, Ngal, d1, d2)
-                    ess_vals = [
-                        blackjax.diagnostics.effective_sample_size(
-                            samples_[k][:, :, gal, 0, 0]
-                        )
-                        for gal in range(min(args.Ngal, samples_[k].shape[2]))
-                    ]
-                    ess_mean = np.mean(ess_vals)
-                    print(
-                        f"ESS {k} (mean over galaxies, first component) {ess_mean:.1f}"
-                    )
-                    print(
-                        f"ESS {k} (mean over galaxies, first component) {ess_mean:.1f}",
-                        file=log_file,
-                    )
-                else:
-                    ess = blackjax.diagnostics.effective_sample_size(
-                        samples_[k][..., 0]
-                    )
-                    print(f"ESS {k} {ess:.1f}")
-                    print(f"ESS {k} {ess:.1f}", file=log_file)
             else:
                 ess = blackjax.diagnostics.effective_sample_size(samples_[k][..., 0])
                 print(f"ESS {k} {ess:.1f}")
                 print(f"ESS {k} {ess:.1f}", file=log_file)
+        else:
+            ess = blackjax.diagnostics.effective_sample_size(samples_[k][..., 0])
+            print(f"ESS {k} {ess:.1f}")
+            print(f"ESS {k} {ess:.1f}", file=log_file)
 
-        # extra chains
-        for i in range(args.num):
-            print("Extra chain", args.num + i + 1, "of", 2 * args.num, "running...")
-            last_states, (samples, info) = jax.vmap(
-                lambda init_states, keys: run_hmc(init_states, keys, args.num_steps)
-            )(last_states, keys[:, args.num + i, :])
-            sample_list.append(samples)
+    # extra chains
+    for i in range(args.num):
+        print("Extra chain", args.num + i + 1, "of", 2 * args.num, "running...")
+        last_states, (samples, info) = jax.vmap(
+            lambda init_states, keys: run_hmc(init_states, keys, args.num_steps)
+        )(last_states, keys[:, args.num + i, :])
+        sample_list.append(samples)
 
-        # concatenates chains
-        samples_ = {
-            key: np.concatenate(
-                [sample_list[k].position[key] for k in range(args.num * 2)], 1
-            )
-            for key in last_states.position
-        }
+    # concatenates chains
+    samples_ = {
+        key: np.concatenate(
+            [sample_list[k].position[key] for k in range(args.num * 2)], 1
+        )
+        for key in last_states.position
+    }
 
     # Build labels list from available sample keys (generic over model)
     # Plot scalar/low-dim params; skip high-dim latents (z, u) but add first component
