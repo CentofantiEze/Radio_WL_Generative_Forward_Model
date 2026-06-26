@@ -36,9 +36,7 @@ from src.shearest.func_utils import stack_2_complex, to_unit_disk
 from src.shearest.model_utils import (
     model_fn,
     model_fn_VAE,
-    model_fn_VAE_noshear,
     model_fn_VAE_flow,
-    model_fn_VAE_flow_noshear,
     model_fn_composite,
 )
 from src.shearest.psf_utils import compute_radio_uv_mask
@@ -223,53 +221,7 @@ def main():
             logger.info(f"Flow condition: {flow_condition}")
 
         # Initialize the forward model
-        # DEBUG ONLY — --no_shear uses noshear model variants to test z/u/flux sampling; remove later
-        if args.no_shear and args.use_flow:
-            logger.warning("WARNING: --no_shear is set with flow, g1=g2=0, sampling u (debug mode)")
-            model = partial(
-                model_fn_VAE_flow_noshear,
-                Ngal=args.Ngal,
-                Npx=args.Npx,
-                pixel_scale_vae=args.pixel_scale_vae,
-                uv_pos=uv_pos,
-                noise_uv=args.noise_uv,
-                obs=data,
-                flux_sigma=args.flux_prior_sigma,
-                flux_max=args.flux_prior_max,
-                flux_min=args.flux_prior_min,
-                latent_dim=args.latent_dim,
-                latent_sigma=args.latent_sigma,
-                jitted_decode=jitted_decode,
-                gsparams=gsparams,
-                run_type=args.vae_model_inference_mode,
-                batch_size=args.vae_inference_batch_size,
-                use_dropout=args.use_dropout,
-                flow_forward=flow_forward,
-                flow_condition=flow_condition,
-            )
-        elif args.no_shear:
-            logger.warning("WARNING: --no_shear is set, g1=g2=0, sampling z (debug mode)")
-            model = partial(
-                model_fn_VAE_noshear,
-                Ngal=args.Ngal,
-                Npx=args.Npx,
-                pixel_scale_vae=args.pixel_scale_vae,
-                uv_pos=uv_pos,
-                noise_uv=args.noise_uv,
-                obs=data,
-                flux_sigma=args.flux_prior_sigma,
-                flux_max=args.flux_prior_max,
-                flux_min=args.flux_prior_min,
-                latent_dim=args.latent_dim,
-                latent_mean=args.latent_mean,
-                latent_sigma=args.latent_sigma,
-                jitted_decode=jitted_decode,
-                gsparams=gsparams,
-                run_type=args.vae_model_inference_mode,
-                batch_size=args.vae_inference_batch_size,
-                use_dropout=args.use_dropout,
-            )
-        elif args.use_flow:
+        if args.use_flow:
             model = partial(
                 model_fn_VAE_flow,
                 Ngal=args.Ngal,
@@ -914,51 +866,7 @@ def main():
             jitted_decode = eqx.filter_jit(
                 lambda z, key: ae.decode(z.astype(jnp.float16), key=key)
             )
-            # DEBUG ONLY — --no_shear uses noshear model variants; remove later
-            if args.no_shear and args.use_flow:
-                model = partial(
-                    model_fn_VAE_flow_noshear,
-                    Ngal=args.Ngal,
-                    Npx=args.Npx,
-                    pixel_scale_vae=args.pixel_scale_vae,
-                    uv_pos=uv_pos,
-                    noise_uv=args.noise_uv,
-                    obs=data,
-                    flux_sigma=args.flux_prior_sigma,
-                    flux_max=args.flux_prior_max,
-                    flux_min=args.flux_prior_min,
-                    latent_dim=args.latent_dim,
-                    latent_sigma=args.latent_sigma,
-                    jitted_decode=jitted_decode,
-                    gsparams=gsparams,
-                    run_type=args.vae_model_inference_mode,
-                    batch_size=args.vae_inference_batch_size,
-                    use_dropout=args.use_dropout,
-                    flow_forward=flow_forward,
-                    flow_condition=flow_condition,
-                )
-            elif args.no_shear:
-                model = partial(
-                    model_fn_VAE_noshear,
-                    Ngal=args.Ngal,
-                    Npx=args.Npx,
-                    pixel_scale_vae=args.pixel_scale_vae,
-                    uv_pos=uv_pos,
-                    noise_uv=args.noise_uv,
-                    obs=data,
-                    flux_sigma=args.flux_prior_sigma,
-                    flux_max=args.flux_prior_max,
-                    flux_min=args.flux_prior_min,
-                    latent_dim=args.latent_dim,
-                    latent_mean=args.latent_mean,
-                    latent_sigma=args.latent_sigma,
-                    jitted_decode=jitted_decode,
-                    gsparams=gsparams,
-                    run_type=args.vae_model_inference_mode,
-                    batch_size=args.vae_inference_batch_size,
-                    use_dropout=args.use_dropout,
-                )
-            elif args.use_flow:
+            if args.use_flow:
                 model = partial(
                     model_fn_VAE_flow,
                     Ngal=args.Ngal,

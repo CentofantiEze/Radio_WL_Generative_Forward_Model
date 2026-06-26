@@ -364,13 +364,6 @@ def build_parser() -> argparse.ArgumentParser:
         default=False,
         help="Stop after MAP: save g1,g2 estimates and exit (no MCMC).",
     )
-    # DEBUG ONLY — remove this flag once z mixing is validated
-    parser.add_argument(
-        "--no_shear",
-        action="store_true",
-        default=False,
-        help="[DEBUG] Disable shear (g1=g2=0) to test z/flux sampling in isolation.",
-    )
 
     # Sampler parameters
     parser.add_argument(
