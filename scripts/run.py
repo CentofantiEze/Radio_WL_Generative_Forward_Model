@@ -778,166 +778,7 @@ def main():
 
     key_warmup, key_sample = jax.random.split(key)
 
-    if args.sampler == "ghmc":
-        # Use the the MEADS algorithm for parallel chains on GPUs
-        """
-        - https://proceedings.mlr.press/v151/hoffman22a/hoffman22a.pdf
-        - https://blackjax-devs.github.io/blackjax/autoapi/blackjax/adaptation/meads_adaptation/index.html
-        - https://blackjax-devs.github.io/blackjax/autoapi/blackjax/mcmc/ghmc/index.html
-        """
-
-        print("Using GHMC sampler with MEADS adaptation", file=log_file)
-        warmup = blackjax.meads_adaptation(
-            log_prob_fn,
-            num_chains=args.num_chains,
-        )
-
-        (last_states, parameters), _ = warmup.run(
-            key_warmup,
-            init_val,
-            num_steps=args.n_warmup,
-        )
-
-        print("Step size:", parameters["step_size"])
-        print(f"Step size: {parameters['step_size']}", file=log_file)
-        if args.step_size is not None:
-            parameters["step_size"] = args.step_size
-            print("Set step size to:", parameters["step_size"])
-            print(f"Set step size to: {parameters['step_size']}", file=log_file)
-        print(parameters.keys(), file=log_file)
-        print(parameters, file=log_file)
-        if args.save_data:
-            np.save(
-                os.path.join(out_dir, "radio_meads_warmup.npy"),
-                last_states.position,
-                allow_pickle=True,
-            )
-
-        # Convert VAE to float16 for sampling (after adaptation in float32)
-        if args.model_profile == "VAE" and args.vae_precision == "float16":
-            ae = jax.tree.map(
-                lambda x: (
-                    x.astype(jnp.float16)
-                    if isinstance(x, jnp.ndarray)
-                    and jnp.issubdtype(x.dtype, jnp.floating)
-                    else x
-                ),
-                ae,
-            )
-            jitted_decode = eqx.filter_jit(
-                lambda z, key: ae.decode(z.astype(jnp.float16), key=key)
-            )
-            # DEBUG ONLY — --no_shear uses noshear model variants; remove later
-            if args.no_shear and args.use_flow:
-                model = partial(
-                    model_fn_VAE_flow_noshear,
-                    Ngal=args.Ngal,
-                    Npx=args.Npx,
-                    pixel_scale_vae=args.pixel_scale_vae,
-                    uv_pos=uv_pos,
-                    noise_uv=args.noise_uv,
-                    obs=data,
-                    flux_sigma=args.flux_prior_sigma,
-                    flux_max=args.flux_prior_max,
-                    flux_min=args.flux_prior_min,
-                    latent_dim=args.latent_dim,
-                    latent_sigma=args.latent_sigma,
-                    jitted_decode=jitted_decode,
-                    gsparams=gsparams,
-                    run_type=args.vae_model_inference_mode,
-                    batch_size=args.vae_inference_batch_size,
-                    use_dropout=args.use_dropout,
-                    flow_forward=flow_forward,
-                    flow_condition=flow_condition,
-                )
-            elif args.no_shear:
-                model = partial(
-                    model_fn_VAE_noshear,
-                    Ngal=args.Ngal,
-                    Npx=args.Npx,
-                    pixel_scale_vae=args.pixel_scale_vae,
-                    uv_pos=uv_pos,
-                    noise_uv=args.noise_uv,
-                    obs=data,
-                    flux_sigma=args.flux_prior_sigma,
-                    flux_max=args.flux_prior_max,
-                    flux_min=args.flux_prior_min,
-                    latent_dim=args.latent_dim,
-                    latent_mean=args.latent_mean,
-                    latent_sigma=args.latent_sigma,
-                    jitted_decode=jitted_decode,
-                    gsparams=gsparams,
-                    run_type=args.vae_model_inference_mode,
-                    batch_size=args.vae_inference_batch_size,
-                    use_dropout=args.use_dropout,
-                )
-            elif args.use_flow:
-                model = partial(
-                    model_fn_VAE_flow,
-                    Ngal=args.Ngal,
-                    Npx=args.Npx,
-                    pixel_scale_vae=args.pixel_scale_vae,
-                    uv_pos=uv_pos,
-                    noise_uv=args.noise_uv,
-                    obs=data,
-                    g_sigma=args.g_prior_sigma,
-                    g_scale=args.g_prior_scale,
-                    flux_sigma=args.flux_prior_sigma,
-                    flux_max=args.flux_prior_max,
-                    flux_min=args.flux_prior_min,
-                    latent_dim=args.latent_dim,
-                    latent_sigma=args.latent_sigma,
-                    jitted_decode=jitted_decode,
-                    gsparams=gsparams,
-                    run_type=args.vae_model_inference_mode,
-                    batch_size=args.vae_inference_batch_size,
-                    use_dropout=args.use_dropout,
-                    flow_forward=flow_forward,
-                    flow_condition=flow_condition,
-                )
-            else:
-                model = partial(
-                    model_fn_VAE,
-                    Ngal=args.Ngal,
-                    Npx=args.Npx,
-                    pixel_scale_vae=args.pixel_scale_vae,
-                    uv_pos=uv_pos,
-                    noise_uv=args.noise_uv,
-                    obs=data,
-                    g_sigma=args.g_prior_sigma,
-                    g_scale=args.g_prior_scale,
-                    flux_sigma=args.flux_prior_sigma,
-                    flux_max=args.flux_prior_max,
-                    flux_min=args.flux_prior_min,
-                    latent_dim=args.latent_dim,
-                    latent_mean=args.latent_mean,
-                    latent_sigma=args.latent_sigma,
-                    jitted_decode=jitted_decode,
-                    gsparams=gsparams,
-                    run_type=args.vae_model_inference_mode,
-                    batch_size=args.vae_inference_batch_size,
-                    use_dropout=args.use_dropout,
-                )
-            seeded_model = seed(model, jax.random.PRNGKey(0))
-
-            @jax.jit
-            def log_prob_fn(params):
-                @jax.checkpoint
-                def _log_density(params):
-                    return numpyro.infer.util.log_density(
-                        seeded_model,
-                        (),
-                        {"obs": data},
-                        params,
-                    )[0]
-
-                return _log_density(params)
-
-            print("VAE decoder converted to float16 for sampling")
-
-        kernel = blackjax.ghmc(log_prob_fn, **parameters)
-
-    elif args.sampler == "mclmc":
+    if args.sampler == "mclmc":
         key_init, key_tune = jax.random.split(key_warmup)
         key_init_chains = jax.random.split(key_init, args.num_chains)
 
@@ -993,12 +834,8 @@ def main():
             float(jnp.sqrt(ndim) / grad_norm) * (DESIRED_ENERGY_VAR / 1e-2) ** 0.25
         )
         if formula_step_size < args.lr_map:
-            # initial_step_size = args.lr_map
-            # init_source = f"floor=lr_map ({args.lr_map:.3e}; formula gave {formula_step_size:.3e})"
-            initial_step_size = 0.1
-            init_source = (
-                f"floor= {initial_step_size:.3e} (formula gave {formula_step_size:.3e})"
-            )
+            initial_step_size = args.lr_map
+            init_source = f"floor=lr_map ({args.lr_map:.3e}; formula gave {formula_step_size:.3e})"
         else:
             initial_step_size = formula_step_size
             init_source = f"gradient formula ({formula_step_size:.3e})"
@@ -1326,9 +1163,9 @@ def main():
         last_states = jax.vmap(kernel.init)(init_val, key_init_chains)
 
     else:
-        raise ValueError("Sampler not recognized. Use ghmc or mclmc.")
+        raise ValueError("Sampler not recognized. Use mclmc.")
 
-    # === GHMC / MCLMC SAMPLING LOOP ===
+    # === SAMPLING LOOP ===
     @partial(jax.jit, static_argnames=("num_steps",))
     def run_hmc(init_states, key, num_steps=1):
 
@@ -1366,13 +1203,9 @@ def main():
 
         # Quick diagnostics: sampler health and shear chain statistics.
         # MCLMC info has no acceptance_rate; energy_change measures integrator accuracy.
-        # GHMC info has acceptance_rate directly (target > 0.6).
-        if args.sampler == "mclmc":
-            sampler_diag = (
-                f"mean|energy_change|={float(jnp.abs(info.energy_change).mean()):.3f}"
-            )
-        else:
-            sampler_diag = f"accept={float(info.acceptance_rate.mean()):.3f}"
+        sampler_diag = (
+            f"mean|energy_change|={float(jnp.abs(info.energy_change).mean()):.3f}"
+        )
         diag = f"  {sampler_diag}"
         if has_shear:
             g1_mean = float(samples.position["g1"].mean()) * g_rescale
