@@ -394,8 +394,8 @@ def main():
         plt.imshow(
             np.abs(data_), vmin=np.min(np.abs(data_)), vmax=np.max(np.abs(data_))
         )
-        logger.info("Data shape:", data_.shape)
-        logger.info("Data max:", np.max(np.abs(data_)))
+        logger.info(f'Data shape: {data_.shape}')
+        logger.info(f'Data max: {np.max(np.abs(data_))}')
         logger.info(f"Data max: {np.max(np.abs(data_))}")
         plt.colorbar()
         plt.savefig(os.path.join(out_dir, "radio_data.png"))
@@ -592,8 +592,7 @@ def main():
 
         # Print MAP diagnostics
         if has_shear:
-            logger.info(init_val["g1"] * g_rescale,
-                init_val["g2"] * g_rescale)
+            logger.info(f"{init_val['g1'] * g_rescale} {init_val['g2'] * g_rescale}")
             logger.info(f"Initial guess: g1={init_val['g1']*g_rescale}, g2={init_val['g2']*g_rescale}")
         logger.info(f"MAP final loss (per chain): {map_losses[:, -1]}")
 
@@ -888,9 +887,9 @@ def main():
                 logger.info(f"End: {t_end.strftime('%Y-%m-%d %H:%M:%S')} (elapsed: {t_end - t_start})")
                 raise RuntimeError(msg)
 
-            logger.info("Step size:", parameters.step_size)
+            logger.info(f'Step size: {parameters.step_size}')
             logger.info(f"Step size: {parameters.step_size}")
-            logger.info("L:", parameters.L)
+            logger.info(f'L: {parameters.L}')
             logger.info(f"L: {parameters.L}")
             inv_mass = parameters.inverse_mass_matrix
             if hasattr(inv_mass, "shape") and inv_mass.ndim > 0:
@@ -1072,7 +1071,7 @@ def main():
     keys = jax.vmap(jax.random.split, in_axes=(0, None))(key_chains, 2 * args.num)
 
     for i in range(args.num):
-        logger.info("Chain", i + 1, "of", 2 * args.num, "running...")
+        logger.info(f'Chain {i + 1} of {2 * args.num} running...')
         last_states, (samples, info) = jax.vmap(
             lambda init_states, keys: run_hmc(init_states, keys, args.num_steps)
         )(last_states, keys[:, i, :])
@@ -1121,7 +1120,7 @@ def main():
 
     # extra chains
     for i in range(args.num):
-        logger.info("Extra chain", args.num + i + 1, "of", 2 * args.num, "running...")
+        logger.info(f'Extra chain {args.num + i + 1} of {2 * args.num} running...')
         last_states, (samples, info) = jax.vmap(
             lambda init_states, keys: run_hmc(init_states, keys, args.num_steps)
         )(last_states, keys[:, args.num + i, :])
