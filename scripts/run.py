@@ -30,6 +30,7 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 import corner
 
 from src.shearest.cli import parse_args
+from src.shearest.logging_setup import setup_logger
 from src.shearest.data_gen_utils import gen_gal_dataset
 from src.shearest.func_utils import stack_2_complex, to_unit_disk
 from src.shearest.model_utils import (
@@ -59,29 +60,26 @@ def main():
         out_dir = os.path.join(args.output_dir, args.id)
     os.makedirs(out_dir, exist_ok=True)
 
-    # create log file
-    log_file = open(os.path.join(out_dir, "radio_sampling.log"), "w")
+    # Configure the package logger (stdout + radio_sampling.log file handler).
+    logger = setup_logger(out_dir)
     t_start = datetime.now()
-    print(f"Start: {t_start.strftime('%Y-%m-%d %H:%M:%S')}", file=log_file)
+    logger.info(f"Start: {t_start.strftime('%Y-%m-%d %H:%M:%S')}")
 
     # Save the arguments
     with open(os.path.join(out_dir, "args.json"), "w") as f:
         json.dump(vars(args), f, indent=4)
 
     # print parameters to log file
-    print(f"Ngal: {args.Ngal}", file=log_file)
-    print(f"Npx: {args.Npx}", file=log_file)
-    print(f"pixel_scale: {args.pixel_scale}", file=log_file)
-    print(f"fov_size: {fov_size}", file=log_file)
-    print(f"noise_uv (model): {args.noise_uv}", file=log_file)
-    print(
-        f"noise_data: {args.noise_data if args.noise_data is not None else f'{args.noise_uv} (fallback to noise_uv)'}",
-        file=log_file,
-    )
-    print(f"g1_true: {args.g1_true}", file=log_file)
-    print(f"g2_true: {args.g2_true}", file=log_file)
-    print(f"Ellipticity scale (data gen): {args.ell_scale}", file=log_file)
-    print(f"Shear prior scale: {args.g_prior_scale}", file=log_file)
+    logger.info(f"Ngal: {args.Ngal}")
+    logger.info(f"Npx: {args.Npx}")
+    logger.info(f"pixel_scale: {args.pixel_scale}")
+    logger.info(f"fov_size: {fov_size}")
+    logger.info(f"noise_uv (model): {args.noise_uv}")
+    logger.info(f"noise_data: {args.noise_data if args.noise_data is not None else f'{args.noise_uv} (fallback to noise_uv)'}")
+    logger.info(f"g1_true: {args.g1_true}")
+    logger.info(f"g2_true: {args.g2_true}")
+    logger.info(f"Ellipticity scale (data gen): {args.ell_scale}")
+    logger.info(f"Shear prior scale: {args.g_prior_scale}")
 
     # Compute the radio PSF
     uv_pos, mask, psf = compute_radio_uv_mask(
@@ -120,15 +118,13 @@ def main():
     # Init seed
     if args.seed is None:
         args.seed = np.random.randint(1, 1e6)
-    print(f"Random seed: {args.seed}")
-    print(f"Random seed: {args.seed}", file=log_file)
+    logger.info(f"Random seed: {args.seed}")
     key = jax.random.PRNGKey(args.seed)
 
     # Generate or load observations
     data_file = os.path.join(out_dir, "radio_data.npy")
     if args.precomputed_map and os.path.exists(data_file):
-        print(f"Loading precomputed data from {data_file}")
-        print(f"Loading precomputed data from {data_file}", file=log_file)
+        logger.info(f"Loading precomputed data from {data_file}")
         data = jnp.array(np.load(data_file))
         data_params = np.load(
             os.path.join(out_dir, "radio_data_params.npy"), allow_pickle=True
@@ -156,13 +152,7 @@ def main():
             assert (
                 data_vae_epoch is not None
             ), "--data_vae_epoch or --vae_epoch required when --data_profile=VAE"
-            print(
-                f"Loading data-generation AE from {data_vae_path} epoch {data_vae_epoch}"
-            )
-            print(
-                f"Loading data-generation AE from {data_vae_path} epoch {data_vae_epoch}",
-                file=log_file,
-            )
+            logger.info(f"Loading data-generation AE from {data_vae_path} epoch {data_vae_epoch}")
             data_ae = load_galaxy_autoencoder(Path(data_vae_path), epoch=data_vae_epoch)
             data_ae = eqx.nn.inference_mode(data_ae, True)
 
@@ -237,24 +227,15 @@ def main():
                     lambda u: flow.flow.bijection.transform(base_bij.transform(u))
                 )
                 flow_condition = None
-            print(f"Loaded flow from {args.flow_path} epoch {args.flow_epoch}")
-            print(f"Flow condition: {flow_condition}")
-            print(
-                f"Loaded flow from {args.flow_path} epoch {args.flow_epoch}",
-                file=log_file,
-            )
-            print(f"Flow condition: {flow_condition}", file=log_file)
+            logger.info(f"Loaded flow from {args.flow_path} epoch {args.flow_epoch}")
+            logger.info(f"Flow condition: {flow_condition}")
+            logger.info(f"Loaded flow from {args.flow_path} epoch {args.flow_epoch}")
+            logger.info(f"Flow condition: {flow_condition}")
 
         # Initialize the forward model
         # DEBUG ONLY — --no_shear uses noshear model variants to test z/u/flux sampling; remove later
         if args.no_shear and args.use_flow:
-            print(
-                "WARNING: --no_shear is set with flow, g1=g2=0, sampling u (debug mode)"
-            )
-            print(
-                "WARNING: --no_shear is set with flow, g1=g2=0, sampling u (debug mode)",
-                file=log_file,
-            )
+            logger.warning("WARNING: --no_shear is set with flow, g1=g2=0, sampling u (debug mode)")
             model = partial(
                 model_fn_VAE_flow_noshear,
                 Ngal=args.Ngal,
@@ -277,11 +258,7 @@ def main():
                 flow_condition=flow_condition,
             )
         elif args.no_shear:
-            print("WARNING: --no_shear is set, g1=g2=0, sampling z (debug mode)")
-            print(
-                "WARNING: --no_shear is set, g1=g2=0, sampling z (debug mode)",
-                file=log_file,
-            )
+            logger.warning("WARNING: --no_shear is set, g1=g2=0, sampling z (debug mode)")
             model = partial(
                 model_fn_VAE_noshear,
                 Ngal=args.Ngal,
@@ -417,9 +394,9 @@ def main():
         plt.imshow(
             np.abs(data_), vmin=np.min(np.abs(data_)), vmax=np.max(np.abs(data_))
         )
-        print("Data shape:", data_.shape)
-        print("Data max:", np.max(np.abs(data_)))
-        print(f"Data max: {np.max(np.abs(data_))}", file=log_file)
+        logger.info("Data shape:", data_.shape)
+        logger.info("Data max:", np.max(np.abs(data_)))
+        logger.info(f"Data max: {np.max(np.abs(data_))}")
         plt.colorbar()
         plt.savefig(os.path.join(out_dir, "radio_data.png"))
 
@@ -455,9 +432,7 @@ def main():
             "g1": jnp.full_like(init_val_["g1"], g1_mcmc),
             "g2": jnp.full_like(init_val_["g2"], g2_mcmc),
         }
-        print(
-            f"g_chains_init: g1={g1_init}, g2={g2_init} (physical) -> g1={g1_mcmc:.4f}, g2={g2_mcmc:.4f} (MCMC space)"
-        )
+        logger.info(f"g_chains_init: g1={g1_init}, g2={g2_init} (physical) -> g1={g1_mcmc:.4f}, g2={g2_mcmc:.4f} (MCMC space)")
 
     # Override the prior draw of u (flow base latent) with N(0, sigma^2). When
     # sigma=0, u collapses to zeros. Useful for testing how much of the MAP
@@ -470,11 +445,7 @@ def main():
             "u": args.u_chains_init
             * jax.random.normal(ukey, u_shape, dtype=init_val_["u"].dtype),
         }
-        print(f"u_chains_init: u ~ N(0, {args.u_chains_init}^2) (shape {u_shape})")
-        print(
-            f"u_chains_init: u ~ N(0, {args.u_chains_init}^2) (shape {u_shape})",
-            file=log_file,
-        )
+        logger.info(f"u_chains_init: u ~ N(0, {args.u_chains_init}^2) (shape {u_shape})")
 
     if args.save_data:
         np.save(
@@ -502,11 +473,8 @@ def main():
 
         return _log_density(params)
 
-    print(
-        f"MAP optimizer: {args.map_optimizer}, lr: {args.lr_map} (shear factor: {args.lr_map_shear_factor}x)",
-        file=log_file,
-    )
-    print(f"MAP number of steps: {args.n_steps_map}", file=log_file)
+    logger.info(f"MAP optimizer: {args.map_optimizer}, lr: {args.lr_map} (shear factor: {args.lr_map_shear_factor}x)")
+    logger.info(f"MAP number of steps: {args.n_steps_map}")
 
     map_init_val = init_val_
     nll = lambda params: -log_prob_fn(params)
@@ -518,25 +486,14 @@ def main():
     # Try to load precomputed MAP values
     map_file = os.path.join(out_dir, "radio_map_val.npy")
     if args.precomputed_map and os.path.exists(map_file):
-        print(f"Loading precomputed MAP from {map_file}")
-        print(f"Loading precomputed MAP from {map_file}", file=log_file)
+        logger.info(f"Loading precomputed MAP from {map_file}")
         init_val = np.load(map_file, allow_pickle=True)[()]
         # Convert to jax arrays
         init_val = {k: jnp.array(v) for k, v in init_val.items()}
         if has_shear:
-            print(
-                f"Loaded MAP: g1={init_val['g1']*g_rescale}, g2={init_val['g2']*g_rescale}"
-            )
-            print(
-                f"Loaded MAP: g1={init_val['g1']*g_rescale}, g2={init_val['g2']*g_rescale}",
-                file=log_file,
-            )
+            logger.info(f"Loaded MAP: g1={init_val['g1']*g_rescale}, g2={init_val['g2']*g_rescale}")
     elif args.precomputed_map:
-        print(f"WARNING: --precomputed_map set but {map_file} not found, running MAP")
-        print(
-            f"WARNING: --precomputed_map set but {map_file} not found, running MAP",
-            file=log_file,
-        )
+        logger.warning(f"WARNING: --precomputed_map set but {map_file} not found, running MAP")
         args.precomputed_map = False
 
     if not args.precomputed_map:
@@ -631,25 +588,14 @@ def main():
             map_losses.block_until_ready()
         t_map_end = datetime.now()
         map_elapsed = t_map_end - t_map_start
-        print(
-            f"MAP elapsed: {map_elapsed}  ({args.n_steps_map_freeze_shear + args.n_steps_map} steps × {args.num_chains} chains)"
-        )
-        print(
-            f"MAP elapsed: {map_elapsed}  ({args.n_steps_map_freeze_shear + args.n_steps_map} steps × {args.num_chains} chains)",
-            file=log_file,
-        )
+        logger.info(f"MAP elapsed: {map_elapsed}  ({args.n_steps_map_freeze_shear + args.n_steps_map} steps × {args.num_chains} chains)")
 
         # Print MAP diagnostics
         if has_shear:
-            print(
-                init_val["g1"] * g_rescale,
-                init_val["g2"] * g_rescale,
-            )
-            print(
-                f"Initial guess: g1={init_val['g1']*g_rescale}, g2={init_val['g2']*g_rescale}",
-                file=log_file,
-            )
-        print(f"MAP final loss (per chain): {map_losses[:, -1]}", file=log_file)
+            logger.info(init_val["g1"] * g_rescale,
+                init_val["g2"] * g_rescale)
+            logger.info(f"Initial guess: g1={init_val['g1']*g_rescale}, g2={init_val['g2']*g_rescale}")
+        logger.info(f"MAP final loss (per chain): {map_losses[:, -1]}")
 
         if args.save_plots:
             # Plot MAP convergence: loss and g1,g2 evolution
@@ -730,21 +676,15 @@ def main():
                 os.path.join(out_dir, "map_shear_estimates.npy"),
                 jnp.stack([g1_estimates, g2_estimates], axis=-1),
             )
-            print(f"Point estimate g1 (per chain): {g1_estimates}")
-            print(f"Point estimate g2 (per chain): {g2_estimates}")
-            print(
-                f"Point estimate g1 mean: {jnp.mean(g1_estimates):.6f}, g2 mean: {jnp.mean(g2_estimates):.6f}"
-            )
-            print(f"True values: g1={args.g1_true}, g2={args.g2_true}")
+            logger.info(f"Point estimate g1 (per chain): {g1_estimates}")
+            logger.info(f"Point estimate g2 (per chain): {g2_estimates}")
+            logger.info(f"Point estimate g1 mean: {jnp.mean(g1_estimates):.6f}, g2 mean: {jnp.mean(g2_estimates):.6f}")
+            logger.info(f"True values: g1={args.g1_true}, g2={args.g2_true}")
         else:
-            print("No shear parameters — point estimate not applicable")
-        print(f"Point estimate saved to {out_dir}", file=log_file)
+            logger.info("No shear parameters — point estimate not applicable")
+        logger.info(f"Point estimate saved to {out_dir}")
         t_end = datetime.now()
-        print(
-            f"End: {t_end.strftime('%Y-%m-%d %H:%M:%S')} (elapsed: {t_end - t_start})",
-            file=log_file,
-        )
-        log_file.close()
+        logger.info(f"End: {t_end.strftime('%Y-%m-%d %H:%M:%S')} (elapsed: {t_end - t_start})")
         sys.exit(0)
 
     if args.save_plots and has_shear:
@@ -804,27 +744,18 @@ def main():
             if float(grad_norm) > 0
             else float("inf")
         )
-        print(
-            f"MAP gradient reduction: ‖∇‖ pre-MAP={float(grad_pre_map_norm):.3e}, "
-            f"post-MAP={float(grad_norm):.3e}, factor={reduction:.1f}x"
-        )
-        print(
-            f"MAP gradient reduction: ‖∇‖ pre-MAP={float(grad_pre_map_norm):.3e}, "
-            f"post-MAP={float(grad_norm):.3e}, factor={reduction:.1f}x",
-            file=log_file,
-        )
+        logger.info(f"MAP gradient reduction: ‖∇‖ pre-MAP={float(grad_pre_map_norm):.3e}, "
+            f"post-MAP={float(grad_norm):.3e}, factor={reduction:.1f}x")
 
         # Per-group ‖∇‖ at MAP — identifies which parameters did/didn't converge.
-        print("Per-group ‖∇‖ at MAP:")
-        print("Per-group ‖∇‖ at MAP:", file=log_file)
+        logger.info("Per-group ‖∇‖ at MAP:")
         for k in sorted(grad_at_map.keys()):
             g_flat = grad_at_map[k].ravel()
             line = (
                 f"  {k:>12s}: ‖∇‖={float(jnp.linalg.norm(g_flat)):.3e}, "
                 f"max|∂|={float(jnp.max(jnp.abs(g_flat))):.3e}"
             )
-            print(line)
-            print(line, file=log_file)
+            logger.info(line)
 
         # Fallback: when grad_norm is enormous (un-converged MAP or stiff
         # likelihood), the formula collapses step_size to ~0 and the EMA in
@@ -840,17 +771,9 @@ def main():
             initial_step_size = formula_step_size
             init_source = f"gradient formula ({formula_step_size:.3e})"
         initial_L = float(jnp.sqrt(ndim)) * initial_step_size
-        print(
-            f"MCLMC init: ndim={ndim}, grad_norm={float(grad_norm):.3e}, "
+        logger.info(f"MCLMC init: ndim={ndim}, grad_norm={float(grad_norm):.3e}, "
             f"initial_step_size={initial_step_size:.3e}, initial_L={initial_L:.3e} "
-            f"[{init_source}]"
-        )
-        print(
-            f"MCLMC init: ndim={ndim}, grad_norm={float(grad_norm):.3e}, "
-            f"initial_step_size={initial_step_size:.3e}, initial_L={initial_L:.3e} "
-            f"[{init_source}]",
-            file=log_file,
-        )
+            f"[{init_source}]")
 
         def mclmc_factory(inverse_mass_matrix):
             return blackjax.mcmc.mclmc.build_kernel(
@@ -865,28 +788,17 @@ def main():
         # compensating for their much narrower posterior relative to latent dims.
         if args.mclmc_inv_mass_file is not None:
             inverse_mass_matrix = jnp.array(np.load(args.mclmc_inv_mass_file))
-            print(f"MCLMC inverse mass matrix loaded from {args.mclmc_inv_mass_file}")
-            print(
-                f"  shape={inverse_mass_matrix.shape}, min={inverse_mass_matrix.min():.6f}, "
-                f"max={inverse_mass_matrix.max():.6f}, ratio={inverse_mass_matrix.max()/inverse_mass_matrix.min():.1f}"
-            )
-            print(
-                f"MCLMC inverse mass matrix loaded from {args.mclmc_inv_mass_file}",
-                file=log_file,
-            )
+            logger.info(f"MCLMC inverse mass matrix loaded from {args.mclmc_inv_mass_file}")
+            logger.info(f"  shape={inverse_mass_matrix.shape}, min={inverse_mass_matrix.min():.6f}, "
+                f"max={inverse_mass_matrix.max():.6f}, ratio={inverse_mass_matrix.max()/inverse_mass_matrix.min():.1f}")
+            logger.info(f"MCLMC inverse mass matrix loaded from {args.mclmc_inv_mass_file}")
         elif args.mclmc_inv_mass_shear is not None:
             inv_mass_parts = []
             for k in sorted(first_chain_init.keys()):
                 val = args.mclmc_inv_mass_shear if k in ("g1", "g2") else 1.0
                 inv_mass_parts.append(jnp.full(first_chain_init[k].size, val))
             inverse_mass_matrix = jnp.concatenate(inv_mass_parts)
-            print(
-                f"MCLMC diagonal inverse mass matrix: g1/g2={args.mclmc_inv_mass_shear}, others=1.0"
-            )
-            print(
-                f"MCLMC diagonal inverse mass matrix: g1/g2={args.mclmc_inv_mass_shear}, others=1.0",
-                file=log_file,
-            )
+            logger.info(f"MCLMC diagonal inverse mass matrix: g1/g2={args.mclmc_inv_mass_shear}, others=1.0")
         else:
             inverse_mass_matrix = jnp.ones((ndim,))
 
@@ -901,13 +813,7 @@ def main():
         first_chain_state = temp_kernel.init(first_chain_init, key_init_chains[0])
 
         if args.mclmc_L is not None and args.step_size is not None:
-            print(
-                f"Skipping MCLMC adaptation: using L={args.mclmc_L}, step_size={args.step_size}"
-            )
-            print(
-                f"Skipping MCLMC adaptation: using L={args.mclmc_L}, step_size={args.step_size}",
-                file=log_file,
-            )
+            logger.info(f"Skipping MCLMC adaptation: using L={args.mclmc_L}, step_size={args.step_size}")
             parameters = mclmc_adj.MCLMCAdaptationState(
                 L=jnp.array(args.mclmc_L),
                 step_size=jnp.array(args.step_size),
@@ -941,9 +847,7 @@ def main():
 
             max_adapt_attempts = 10
             for adapt_attempt in range(1, max_adapt_attempts + 1):
-                print(
-                    f"MCLMC adaptation attempt {adapt_attempt}/{max_adapt_attempts}..."
-                )
+                logger.info(f"MCLMC adaptation attempt {adapt_attempt}/{max_adapt_attempts}...")
                 key_tune, key_retry = jax.random.split(key_tune)
                 key_phase12, key_phase3 = jax.random.split(key_retry)
 
@@ -951,10 +855,8 @@ def main():
                 adapted_state, parameters = L_step_size_adapt(
                     first_chain_state, initial_params, args.n_warmup, key_phase12
                 )
-                print(
-                    f"  After phase 1+2: L={float(parameters.L):.6f}, "
-                    f"step_size={float(parameters.step_size):.8f}"
-                )
+                logger.info(f"  After phase 1+2: L={float(parameters.L):.6f}, "
+                    f"step_size={float(parameters.step_size):.8f}")
 
                 # Phase 3: refine L via ESS — only if phase 1+2 didn't collapse.
                 # A collapsed phase 1+2 means L or step_size went to ~0 (dead chain),
@@ -967,72 +869,47 @@ def main():
                     adapted_state, parameters = mclmc_adj.make_adaptation_L(
                         adapted_kernel, frac=frac_tune3, Lfactor=0.4
                     )(adapted_state, parameters, args.n_warmup, key_phase3)
-                    print(
-                        f"  After phase 3:   L={float(parameters.L):.6f}, "
-                        f"step_size={float(parameters.step_size):.8f}"
-                    )
+                    logger.info(f"  After phase 3:   L={float(parameters.L):.6f}, "
+                        f"step_size={float(parameters.step_size):.8f}")
                 elif not chain_ok:
-                    print(f"  Phase 1+2 collapsed; skipping phase 3")
+                    logger.info(f"  Phase 1+2 collapsed; skipping phase 3")
 
                 if parameters.step_size > 0 and parameters.L > 0:
                     break
-                print(
-                    f"Adaptation failed (step_size={parameters.step_size}, L={parameters.L}), retrying..."
-                )
+                logger.info(f"Adaptation failed (step_size={parameters.step_size}, L={parameters.L}), retrying...")
 
             if parameters.step_size <= 0 or parameters.L <= 0:
                 msg = (
                     f"MCLMC adaptation failed after {max_adapt_attempts} attempts: "
                     f"step_size={parameters.step_size}, L={parameters.L}"
                 )
-                print(msg)
-                print(msg, file=log_file)
+                logger.info(msg)
                 t_end = datetime.now()
-                print(
-                    f"End: {t_end.strftime('%Y-%m-%d %H:%M:%S')} (elapsed: {t_end - t_start})",
-                    file=log_file,
-                )
-                log_file.close()
+                logger.info(f"End: {t_end.strftime('%Y-%m-%d %H:%M:%S')} (elapsed: {t_end - t_start})")
                 raise RuntimeError(msg)
 
-            print("Step size:", parameters.step_size)
-            print(f"Step size: {parameters.step_size}", file=log_file)
-            print("L:", parameters.L)
-            print(f"L: {parameters.L}", file=log_file)
+            logger.info("Step size:", parameters.step_size)
+            logger.info(f"Step size: {parameters.step_size}")
+            logger.info("L:", parameters.L)
+            logger.info(f"L: {parameters.L}")
             inv_mass = parameters.inverse_mass_matrix
             if hasattr(inv_mass, "shape") and inv_mass.ndim > 0:
-                print(
-                    f"Inverse mass matrix: min={inv_mass.min():.6f}, max={inv_mass.max():.6f}, "
-                    f"median={jnp.median(inv_mass):.6f}, ratio={inv_mass.max()/inv_mass.min():.1f}"
-                )
-                print(
-                    f"Inverse mass matrix: min={inv_mass.min():.6f}, max={inv_mass.max():.6f}, "
-                    f"median={jnp.median(inv_mass):.6f}, ratio={inv_mass.max()/inv_mass.min():.1f}",
-                    file=log_file,
-                )
+                logger.info(f"Inverse mass matrix: min={inv_mass.min():.6f}, max={inv_mass.max():.6f}, "
+                    f"median={jnp.median(inv_mass):.6f}, ratio={inv_mass.max()/inv_mass.min():.1f}")
                 # Print per-parameter group and save full vector
                 offset = 0
                 for k in sorted(first_chain_init.keys()):
                     size = first_chain_init[k].size
                     chunk = inv_mass[offset : offset + size]
-                    print(
-                        f"  {k:>6s} [{size:4d}]: min={chunk.min():.6f}, max={chunk.max():.6f}, median={jnp.median(chunk):.6f}"
-                    )
-                    print(
-                        f"  {k:>6s} [{size:4d}]: min={chunk.min():.6f}, max={chunk.max():.6f}, median={jnp.median(chunk):.6f}",
-                        file=log_file,
-                    )
+                    logger.info(f"  {k:>6s} [{size:4d}]: min={chunk.min():.6f}, max={chunk.max():.6f}, median={jnp.median(chunk):.6f}")
                     offset += size
                 np.save(
                     os.path.join(out_dir, "mclmc_inv_mass_matrix.npy"),
                     np.array(inv_mass),
                 )
-                print(
-                    f"Saved inverse mass matrix to {out_dir}/mclmc_inv_mass_matrix.npy"
-                )
+                logger.info(f"Saved inverse mass matrix to {out_dir}/mclmc_inv_mass_matrix.npy")
             else:
-                print(f"Inverse mass matrix: scalar = {inv_mass}")
-                print(f"Inverse mass matrix: scalar = {inv_mass}", file=log_file)
+                logger.info(f"Inverse mass matrix: scalar = {inv_mass}")
 
         # Convert VAE to float16 for sampling (after adaptation in float32)
         if args.model_profile == "VAE" and args.vae_precision == "float16":
@@ -1154,7 +1031,7 @@ def main():
 
                 return _log_density(params)
 
-            print("VAE decoder converted to float16 for sampling")
+            logger.info("VAE decoder converted to float16 for sampling")
 
         # Build the final kernel with tuned parameters
         kernel = blackjax.mclmc(log_prob_fn, **parameters._asdict())
@@ -1179,10 +1056,10 @@ def main():
         return last_states, (samples, info)
 
     # loop over lax.scan to save GPU memory
-    print(f"Number of chains: {args.num_chains}", file=log_file)
-    print(f"Number of loops: {args.num}", file=log_file)
-    print(f"Number of steps: {args.num_steps}", file=log_file)
-    print(f"Number of samples per chain: {args.num_steps*args.num*2}", file=log_file)
+    logger.info(f"Number of chains: {args.num_chains}")
+    logger.info(f"Number of loops: {args.num}")
+    logger.info(f"Number of steps: {args.num_steps}")
+    logger.info(f"Number of samples per chain: {args.num_steps*args.num*2}")
 
     key_chains = jax.random.split(key_sample, args.num_chains)
 
@@ -1195,7 +1072,7 @@ def main():
     keys = jax.vmap(jax.random.split, in_axes=(0, None))(key_chains, 2 * args.num)
 
     for i in range(args.num):
-        print("Chain", i + 1, "of", 2 * args.num, "running...")
+        logger.info("Chain", i + 1, "of", 2 * args.num, "running...")
         last_states, (samples, info) = jax.vmap(
             lambda init_states, keys: run_hmc(init_states, keys, args.num_steps)
         )(last_states, keys[:, i, :])
@@ -1215,16 +1092,14 @@ def main():
             diag += (
                 f" | g1={g1_mean:.4f}±{g1_std:.4f}" f" | g2={g2_mean:.4f}±{g2_std:.4f}"
             )
-        print(diag)
-        print(diag, file=log_file)
+        logger.info(diag)
 
     samples_ = {
         key: np.concatenate([sample_list[k].position[key] for k in range(args.num)], 1)
         for key in last_states.position
     }
     # Print ESS for all parameters
-    print("ESS at the end of first loop")
-    print("ESS at the end of first loop", file=log_file)
+    logger.info("ESS at the end of first loop")
     for k in sorted(samples_.keys()):
         if samples_[k].ndim >= 3 and samples_[k].shape[-1] > 1:
             # Multi-dimensional param (e.g. z, flux per galaxy): report mean ESS over first component
@@ -1236,23 +1111,17 @@ def main():
                     for gal in range(min(args.Ngal, samples_[k].shape[2]))
                 ]
                 ess_mean = np.mean(ess_vals)
-                print(f"ESS {k} (mean over galaxies, first component) {ess_mean:.1f}")
-                print(
-                    f"ESS {k} (mean over galaxies, first component) {ess_mean:.1f}",
-                    file=log_file,
-                )
+                logger.info(f"ESS {k} (mean over galaxies, first component) {ess_mean:.1f}")
             else:
                 ess = blackjax.diagnostics.effective_sample_size(samples_[k][..., 0])
-                print(f"ESS {k} {ess:.1f}")
-                print(f"ESS {k} {ess:.1f}", file=log_file)
+                logger.info(f"ESS {k} {ess:.1f}")
         else:
             ess = blackjax.diagnostics.effective_sample_size(samples_[k][..., 0])
-            print(f"ESS {k} {ess:.1f}")
-            print(f"ESS {k} {ess:.1f}", file=log_file)
+            logger.info(f"ESS {k} {ess:.1f}")
 
     # extra chains
     for i in range(args.num):
-        print("Extra chain", args.num + i + 1, "of", 2 * args.num, "running...")
+        logger.info("Extra chain", args.num + i + 1, "of", 2 * args.num, "running...")
         last_states, (samples, info) = jax.vmap(
             lambda init_states, keys: run_hmc(init_states, keys, args.num_steps)
         )(last_states, keys[:, args.num + i, :])
@@ -1426,8 +1295,7 @@ def main():
             plt.close()
 
     # Final ESS for all parameters
-    print("ESS at the end of second loop")
-    print("ESS at the end of second loop", file=log_file)
+    logger.info("ESS at the end of second loop")
     for k in sorted(samples_.keys()):
         if samples_[k].ndim == 5:  # z/u: (chains, steps, Ngal, d1, d2)
             ess_vals = [
@@ -1435,22 +1303,17 @@ def main():
                 for gal in range(min(args.Ngal, samples_[k].shape[2]))
             ]
             ess_mean = np.mean(ess_vals)
-            print(f"ESS {k} (mean over galaxies, first component) {ess_mean:.1f}")
-            print(
-                f"ESS {k} (mean over galaxies, first component) {ess_mean:.1f}",
-                file=log_file,
-            )
+            logger.info(f"ESS {k} (mean over galaxies, first component) {ess_mean:.1f}")
         else:
             ess = blackjax.diagnostics.effective_sample_size(samples_[k][..., 0])
-            print(f"ESS {k} {ess:.1f}")
-            print(f"ESS {k} {ess:.1f}", file=log_file)
+            logger.info(f"ESS {k} {ess:.1f}")
 
     if has_shear:
         flatchain = np.std(samples_["g1"], axis=1) < 1e-4
-        print("Flatchains:")
-        print(flatchain)
-        print("Flatchains:", file=log_file)
-        print(flatchain, file=log_file)
+        logger.info("Flatchains:")
+        logger.info(flatchain)
+        logger.info("Flatchains:")
+        logger.info(flatchain)
 
         # Compute posterior density estimation shear samples
         g1_scaled = samples_["g1"][np.where(flatchain == False), :]
@@ -1462,11 +1325,10 @@ def main():
         )
 
         # Fit and save GMM posterior density
-        print("Fitting GMM to shear posterior...")
+        logger.info("Fitting GMM to shear posterior...")
         gmm_params = fit_gmm(samples_g_scaled, n_components=5)
         save_gmm(gmm_params, os.path.join(out_dir, "radio_shear_gmm.npz"))
-        print(f"GMM saved with {len(gmm_params['weights'])} components")
-        print(f"GMM saved with {len(gmm_params['weights'])} components", file=log_file)
+        logger.info(f"GMM saved with {len(gmm_params['weights'])} components")
 
         # Save sample-level mean and std (avoids GMM approximation error)
         g_mean = np.mean(samples_g_scaled, axis=0)
@@ -1496,23 +1358,19 @@ def main():
 
     # Save samples
     if args.save_samples:
-        print("Saving samples...")
+        logger.info("Saving samples...")
         np.savez(os.path.join(out_dir, "radio_samples.npz"), **samples_)
 
     # Print arguments
-    print("Arguments:", file=log_file)
+    logger.info("Arguments:")
     for key, value in vars(args).items():
-        print(f"  {key}: {value}", file=log_file)
+        logger.info(f"  {key}: {value}")
 
     # Save log file
     t_end = datetime.now()
-    print(
-        f"End: {t_end.strftime('%Y-%m-%d %H:%M:%S')} (elapsed: {t_end - t_start})",
-        file=log_file,
-    )
-    log_file.close()
+    logger.info(f"End: {t_end.strftime('%Y-%m-%d %H:%M:%S')} (elapsed: {t_end - t_start})")
 
-    print("Done.")
+    logger.info("Done.")
 
 
 if __name__ == "__main__":
