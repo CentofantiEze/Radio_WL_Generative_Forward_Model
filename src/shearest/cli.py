@@ -453,11 +453,45 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _validate(parser: argparse.ArgumentParser, args: argparse.Namespace) -> None:
+    """Cross-argument validation that argparse cannot express on its own.
+
+    Uses ``parser.error(...)`` rather than ``assert`` so it survives
+    ``python -O`` (which strips ``assert`` statements) and exits with the
+    conventional CLI status code 2.
+    """
+    if args.data_profile == "VAE":
+        # gen_gal_dataset needs an AE with a trained encoder for whitening.
+        # Either --data_vae_path or --vae_path (fallback) must be set.
+        if args.data_vae_path is None and args.vae_path is None:
+            parser.error(
+                "--data_vae_path or --vae_path required when --data_profile=VAE"
+            )
+        if args.data_vae_epoch is None and args.vae_epoch is None:
+            parser.error(
+                "--data_vae_epoch or --vae_epoch required when --data_profile=VAE"
+            )
+
+    if args.use_flow:
+        if args.flow_path is None:
+            parser.error("--flow_path required when --use_flow is set")
+        if args.flow_epoch is None:
+            parser.error("--flow_epoch required when --use_flow is set")
+
+
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
-    """Parse CLI args from ``argv`` (default: ``sys.argv[1:]``)."""
-    return build_parser().parse_args(argv)
+    """Parse CLI args from ``argv`` (default: ``sys.argv[1:]``) and validate.
+
+    Cross-argument validation lives in ``_validate`` and runs before the
+    namespace is returned, so the rest of the pipeline can assume the args
+    are internally consistent.
+    """
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    _validate(parser, args)
+    return args
 
 
 if __name__ == "__main__":
     # Allow ``python -m shearest.cli --help`` for quick inspection.
-    build_parser().parse_args()
+    parse_args()

@@ -140,18 +140,13 @@ def main():
             # --data_profile=VAE. Falls back to the model AE path/epoch if the
             # data-specific args are not set. The encoder is needed, so make sure
             # the path points to a non-distilled checkpoint.
+            # Presence of (data_vae_path or vae_path) is guaranteed by cli._validate.
             data_vae_path = args.data_vae_path if args.data_vae_path else args.vae_path
             data_vae_epoch = (
                 args.data_vae_epoch
                 if args.data_vae_epoch is not None
                 else args.vae_epoch
             )
-            assert (
-                data_vae_path is not None
-            ), "--data_vae_path or --vae_path required when --data_profile=VAE"
-            assert (
-                data_vae_epoch is not None
-            ), "--data_vae_epoch or --vae_epoch required when --data_profile=VAE"
             logger.info(f"Loading data-generation AE from {data_vae_path} epoch {data_vae_epoch}")
             data_ae = load_galaxy_autoencoder(Path(data_vae_path), epoch=data_vae_epoch)
             data_ae = eqx.nn.inference_mode(data_ae, True)
@@ -206,12 +201,7 @@ def main():
         flow_forward = None
         flow_condition = None
         if args.use_flow:
-            assert (
-                args.flow_path is not None
-            ), "--flow_path required when --use_flow is set"
-            assert (
-                args.flow_epoch is not None
-            ), "--flow_epoch required when --use_flow is set"
+            # Presence of flow_path and flow_epoch is guaranteed by cli._validate.
             flow = load_flow(Path(args.flow_path), epoch=args.flow_epoch)
             # The flow's base_dist may have learned loc/scale parameters during
             # training, so we must apply base_dist.bijection (Affine) before the
