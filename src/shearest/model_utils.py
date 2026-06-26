@@ -9,9 +9,14 @@ import numpyro.distributions as dist
 from jax import checkpoint
 import equinox as eqx
 
-from .data_gen_utils import draw_exp_profile, draw_spergel_profile, draw_NN_profile, draw_composite_profile
+from .data_gen_utils import (
+    draw_exp_profile,
+    draw_spergel_profile,
+    draw_NN_profile,
+    draw_composite_profile,
+)
 from .func_utils import to_unit_disk
-from pshear.nn.utils import split # type: ignore
+from pshear.nn.utils import split  # type: ignore
 
 
 # @partial(jax.jit, static_argnums=(0,1,2,3,4))
@@ -37,7 +42,7 @@ def model_fn(
 
     u = jnp.ones((Ngal,))  # sampling galaxies all at once
 
-    # Spergel profile 
+    # Spergel profile
     if profile_type == "spergel":
         nu_min = -0.7  # Safety limit (to avoid nu < -1)
         nu_max = 1.0  # Max limit (to avoid numerical issues at high nu)
@@ -85,7 +90,9 @@ def model_fn(
     g = jnp.repeat(jnp.stack([g1, g2], 0), Ngal, -1)
     g = to_unit_disk(g)
     if profile_type == "exp":
-        draw = partial(draw_exp_profile, uv_pos=uv_pos, Npx=Npx, pixel_scale=pixel_scale)
+        draw = partial(
+            draw_exp_profile, uv_pos=uv_pos, Npx=Npx, pixel_scale=pixel_scale
+        )
         im_gal = jax.vmap(draw)(
             hlr=hlr,
             flux=flux,
@@ -97,7 +104,9 @@ def model_fn(
     elif profile_type == "sersic":
         raise NotImplementedError("Sersic profile not implemented in JAX-Galsim yet.")
     elif profile_type == "spergel":
-        draw = partial(draw_spergel_profile, uv_pos=uv_pos, Npx=Npx, pixel_scale=pixel_scale)
+        draw = partial(
+            draw_spergel_profile, uv_pos=uv_pos, Npx=Npx, pixel_scale=pixel_scale
+        )
         im_gal = jax.vmap(draw)(
             n=nu,
             hlr=hlr,
@@ -109,8 +118,9 @@ def model_fn(
         )
     else:
         raise ValueError("Profile type not recognized.")
-   
+
     return numpyro.sample("obs", dist.Normal(im_gal, noise_uv), obs=obs)
+
 
 def model_fn_composite(
     Ngal=None,
@@ -192,9 +202,10 @@ def model_fn_composite(
 
     g = jnp.repeat(jnp.stack([g1, g2], 0), Ngal, -1)
     g = to_unit_disk(g)
-    
-    
-    draw = partial(draw_composite_profile, uv_pos=uv_pos, Npx=Npx, pixel_scale=pixel_scale)
+
+    draw = partial(
+        draw_composite_profile, uv_pos=uv_pos, Npx=Npx, pixel_scale=pixel_scale
+    )
     im_gal = jax.vmap(draw)(
         hlr_disk=hlr_disk,
         hlr_bulge=hlr_bulge,
@@ -207,8 +218,9 @@ def model_fn_composite(
         g1=g[0],
         g2=g[1],
     )
-   
+
     return numpyro.sample("obs", dist.Normal(im_gal, noise_uv), obs=obs)
+
 
 def model_fn_VAE(
     Ngal=None,
@@ -231,7 +243,17 @@ def model_fn_VAE(
     batch_size=1,
     use_dropout=False,
 ):
-    z = numpyro.sample("z", dist.Normal(jnp.zeros((Ngal ,latent_dim, latent_dim)), latent_sigma * jnp.ones((Ngal ,latent_dim, latent_dim)))) / latent_sigma + latent_mean
+    z = (
+        numpyro.sample(
+            "z",
+            dist.Normal(
+                jnp.zeros((Ngal, latent_dim, latent_dim)),
+                latent_sigma * jnp.ones((Ngal, latent_dim, latent_dim)),
+            ),
+        )
+        / latent_sigma
+        + latent_mean
+    )
 
     # assuming constant shear across galaxies
     g1 = (
@@ -248,7 +270,9 @@ def model_fn_VAE(
     g = to_unit_disk(g)
 
     # flux
-    flux_z = numpyro.sample("flux", dist.Normal(jnp.zeros((Ngal,)), flux_sigma * jnp.ones((Ngal,))))
+    flux_z = numpyro.sample(
+        "flux", dist.Normal(jnp.zeros((Ngal,)), flux_sigma * jnp.ones((Ngal,)))
+    )
     flux = flux_min + jax.nn.sigmoid(flux_z / flux_sigma) * (flux_max - flux_min)
 
     if use_dropout:
@@ -264,19 +288,23 @@ def model_fn_VAE(
 
     # Create a partial function to bake in the static arguments for draw_NN_profile.
     # This is the key to avoiding the TypeError with JAX transformations.
-    draw = partial(draw_NN_profile,
-                   uv_pos=uv_pos,
-                   Npx=Npx,
-                   pixel_scale_vae=pixel_scale_vae,
-                   jitted_decode=jitted_decode,
-                   gsparams=gsparams,
-                   use_dropout=use_dropout)
+    draw = partial(
+        draw_NN_profile,
+        uv_pos=uv_pos,
+        Npx=Npx,
+        pixel_scale_vae=pixel_scale_vae,
+        jitted_decode=jitted_decode,
+        gsparams=gsparams,
+        use_dropout=use_dropout,
+    )
 
     if run_type == "sequential":
+
         def scan_body(carry, sliced_inputs):
             z_i, flux_i, g0_i, g1_i, subkey_i = sliced_inputs
             im_gal_i = checkpoint(draw)(z_i, flux_i, g0_i, g1_i, subkey_i)
             return carry, im_gal_i
+
         scan_inputs = (z, flux, g[0], g[1], subkeys)
         _, im_gal = jax.lax.scan(scan_body, None, scan_inputs)
 
@@ -287,14 +315,14 @@ def model_fn_VAE(
         # Pad inputs to be divisible by batch_size
         pad_size = (batch_size - (Ngal % batch_size)) % batch_size
         if pad_size > 0:
-            z = jnp.pad(z, ((0, pad_size), (0, 0), (0, 0)), mode='constant')
-            flux = jnp.pad(flux, (0, pad_size), mode='constant')
-            g = jnp.pad(g, ((0, 0), (0, pad_size)), mode='constant')
-        
+            z = jnp.pad(z, ((0, pad_size), (0, 0), (0, 0)), mode="constant")
+            flux = jnp.pad(flux, (0, pad_size), mode="constant")
+            g = jnp.pad(g, ((0, 0), (0, pad_size)), mode="constant")
+
         num_batches = z.shape[0] // batch_size
         # Pad subkeys to match padded galaxy count, then reshape for batching
         if pad_size > 0:
-            subkeys = jnp.pad(subkeys, ((0, pad_size), (0, 0)), mode='constant')
+            subkeys = jnp.pad(subkeys, ((0, pad_size), (0, 0)), mode="constant")
         subkeys_batched = subkeys.reshape((num_batches, batch_size, -1))
 
         # Reshape for batching
@@ -314,7 +342,7 @@ def model_fn_VAE(
         _, im_gal_batched = jax.lax.scan(batch_scan_body, None, scan_inputs)
 
         # Reshape and truncate padding
-        im_gal_padded = im_gal_batched.reshape((-1, 2,im_gal_batched.shape[-1]))
+        im_gal_padded = im_gal_batched.reshape((-1, 2, im_gal_batched.shape[-1]))
         im_gal = im_gal_padded[:Ngal]
 
     else:
@@ -342,13 +370,25 @@ def model_fn_VAE_noshear(
     batch_size=1,
     use_dropout=False,
 ):
-    z = numpyro.sample("z", dist.Normal(jnp.zeros((Ngal, latent_dim, latent_dim)), latent_sigma * jnp.ones((Ngal, latent_dim, latent_dim)))) / latent_sigma + latent_mean
+    z = (
+        numpyro.sample(
+            "z",
+            dist.Normal(
+                jnp.zeros((Ngal, latent_dim, latent_dim)),
+                latent_sigma * jnp.ones((Ngal, latent_dim, latent_dim)),
+            ),
+        )
+        / latent_sigma
+        + latent_mean
+    )
 
     # No shear — g1=g2=0
     g = jnp.zeros((2, Ngal))
 
     # flux
-    flux_z = numpyro.sample("flux", dist.Normal(jnp.zeros((Ngal,)), flux_sigma * jnp.ones((Ngal,))))
+    flux_z = numpyro.sample(
+        "flux", dist.Normal(jnp.zeros((Ngal,)), flux_sigma * jnp.ones((Ngal,)))
+    )
     flux = flux_min + jax.nn.sigmoid(flux_z / flux_sigma) * (flux_max - flux_min)
 
     if use_dropout:
@@ -357,19 +397,23 @@ def model_fn_VAE_noshear(
     else:
         subkeys = jnp.zeros((Ngal, 2), dtype=jnp.uint32)
 
-    draw = partial(draw_NN_profile,
-                   uv_pos=uv_pos,
-                   Npx=Npx,
-                   pixel_scale_vae=pixel_scale_vae,
-                   jitted_decode=jitted_decode,
-                   gsparams=gsparams,
-                   use_dropout=use_dropout)
+    draw = partial(
+        draw_NN_profile,
+        uv_pos=uv_pos,
+        Npx=Npx,
+        pixel_scale_vae=pixel_scale_vae,
+        jitted_decode=jitted_decode,
+        gsparams=gsparams,
+        use_dropout=use_dropout,
+    )
 
     if run_type == "sequential":
+
         def scan_body(carry, sliced_inputs):
             z_i, flux_i, g0_i, g1_i, subkey_i = sliced_inputs
             im_gal_i = checkpoint(draw)(z_i, flux_i, g0_i, g1_i, subkey_i)
             return carry, im_gal_i
+
         scan_inputs = (z, flux, g[0], g[1], subkeys)
         _, im_gal = jax.lax.scan(scan_body, None, scan_inputs)
 
@@ -379,13 +423,13 @@ def model_fn_VAE_noshear(
     elif run_type == "batch":
         pad_size = (batch_size - (Ngal % batch_size)) % batch_size
         if pad_size > 0:
-            z = jnp.pad(z, ((0, pad_size), (0, 0), (0, 0)), mode='constant')
-            flux = jnp.pad(flux, (0, pad_size), mode='constant')
-            g = jnp.pad(g, ((0, 0), (0, pad_size)), mode='constant')
+            z = jnp.pad(z, ((0, pad_size), (0, 0), (0, 0)), mode="constant")
+            flux = jnp.pad(flux, (0, pad_size), mode="constant")
+            g = jnp.pad(g, ((0, 0), (0, pad_size)), mode="constant")
 
         num_batches = z.shape[0] // batch_size
         if pad_size > 0:
-            subkeys = jnp.pad(subkeys, ((0, pad_size), (0, 0)), mode='constant')
+            subkeys = jnp.pad(subkeys, ((0, pad_size), (0, 0)), mode="constant")
         subkeys_batched = subkeys.reshape((num_batches, batch_size, -1))
 
         z_batched = z.reshape((num_batches, batch_size, latent_dim, latent_dim))
@@ -434,7 +478,16 @@ def model_fn_VAE_flow_noshear(
     flow_condition=None,
 ):
     # Sample u in the flow base space (standard normal)
-    u = numpyro.sample("u", dist.Normal(jnp.zeros((Ngal, latent_dim, latent_dim)), latent_sigma * jnp.ones((Ngal, latent_dim, latent_dim)))) / latent_sigma
+    u = (
+        numpyro.sample(
+            "u",
+            dist.Normal(
+                jnp.zeros((Ngal, latent_dim, latent_dim)),
+                latent_sigma * jnp.ones((Ngal, latent_dim, latent_dim)),
+            ),
+        )
+        / latent_sigma
+    )
 
     # Transform u -> z via the flow bijection
     u_flat = u.reshape(Ngal, -1)
@@ -457,19 +510,23 @@ def model_fn_VAE_flow_noshear(
     else:
         subkeys = jnp.zeros((Ngal, 2), dtype=jnp.uint32)
 
-    draw = partial(draw_NN_profile,
-                   uv_pos=uv_pos,
-                   Npx=Npx,
-                   pixel_scale_vae=pixel_scale_vae,
-                   jitted_decode=jitted_decode,
-                   gsparams=gsparams,
-                   use_dropout=use_dropout)
+    draw = partial(
+        draw_NN_profile,
+        uv_pos=uv_pos,
+        Npx=Npx,
+        pixel_scale_vae=pixel_scale_vae,
+        jitted_decode=jitted_decode,
+        gsparams=gsparams,
+        use_dropout=use_dropout,
+    )
 
     if run_type == "sequential":
+
         def scan_body(carry, sliced_inputs):
             z_i, flux_i, g0_i, g1_i, subkey_i = sliced_inputs
             im_gal_i = checkpoint(draw)(z_i, flux_i, g0_i, g1_i, subkey_i)
             return carry, im_gal_i
+
         scan_inputs = (z, flux, g[0], g[1], subkeys)
         _, im_gal = jax.lax.scan(scan_body, None, scan_inputs)
 
@@ -479,13 +536,13 @@ def model_fn_VAE_flow_noshear(
     elif run_type == "batch":
         pad_size = (batch_size - (Ngal % batch_size)) % batch_size
         if pad_size > 0:
-            z = jnp.pad(z, ((0, pad_size), (0, 0), (0, 0)), mode='constant')
-            flux = jnp.pad(flux, (0, pad_size), mode='constant')
-            g = jnp.pad(g, ((0, 0), (0, pad_size)), mode='constant')
+            z = jnp.pad(z, ((0, pad_size), (0, 0), (0, 0)), mode="constant")
+            flux = jnp.pad(flux, (0, pad_size), mode="constant")
+            g = jnp.pad(g, ((0, 0), (0, pad_size)), mode="constant")
 
         num_batches = z.shape[0] // batch_size
         if pad_size > 0:
-            subkeys = jnp.pad(subkeys, ((0, pad_size), (0, 0)), mode='constant')
+            subkeys = jnp.pad(subkeys, ((0, pad_size), (0, 0)), mode="constant")
         subkeys_batched = subkeys.reshape((num_batches, batch_size, -1))
 
         z_batched = z.reshape((num_batches, batch_size, latent_dim, latent_dim))
@@ -535,7 +592,16 @@ def model_fn_VAE_flow(
     flow_condition=None,
 ):
     # Sample u in the flow base space (standard normal)
-    u = numpyro.sample("u", dist.Normal(jnp.zeros((Ngal, latent_dim, latent_dim)), latent_sigma * jnp.ones((Ngal, latent_dim, latent_dim)))) / latent_sigma
+    u = (
+        numpyro.sample(
+            "u",
+            dist.Normal(
+                jnp.zeros((Ngal, latent_dim, latent_dim)),
+                latent_sigma * jnp.ones((Ngal, latent_dim, latent_dim)),
+            ),
+        )
+        / latent_sigma
+    )
 
     # Transform u -> z via the flow bijection
     u_flat = u.reshape(Ngal, -1)  # (Ngal, latent_dim^2)
@@ -569,19 +635,23 @@ def model_fn_VAE_flow(
     else:
         subkeys = jnp.zeros((Ngal, 2), dtype=jnp.uint32)
 
-    draw = partial(draw_NN_profile,
-                   uv_pos=uv_pos,
-                   Npx=Npx,
-                   pixel_scale_vae=pixel_scale_vae,
-                   jitted_decode=jitted_decode,
-                   gsparams=gsparams,
-                   use_dropout=use_dropout)
+    draw = partial(
+        draw_NN_profile,
+        uv_pos=uv_pos,
+        Npx=Npx,
+        pixel_scale_vae=pixel_scale_vae,
+        jitted_decode=jitted_decode,
+        gsparams=gsparams,
+        use_dropout=use_dropout,
+    )
 
     if run_type == "sequential":
+
         def scan_body(carry, sliced_inputs):
             z_i, flux_i, g0_i, g1_i, subkey_i = sliced_inputs
             im_gal_i = checkpoint(draw)(z_i, flux_i, g0_i, g1_i, subkey_i)
             return carry, im_gal_i
+
         scan_inputs = (z, flux, g[0], g[1], subkeys)
         _, im_gal = jax.lax.scan(scan_body, None, scan_inputs)
 
@@ -591,13 +661,13 @@ def model_fn_VAE_flow(
     elif run_type == "batch":
         pad_size = (batch_size - (Ngal % batch_size)) % batch_size
         if pad_size > 0:
-            z = jnp.pad(z, ((0, pad_size), (0, 0), (0, 0)), mode='constant')
-            flux = jnp.pad(flux, (0, pad_size), mode='constant')
-            g = jnp.pad(g, ((0, 0), (0, pad_size)), mode='constant')
+            z = jnp.pad(z, ((0, pad_size), (0, 0), (0, 0)), mode="constant")
+            flux = jnp.pad(flux, (0, pad_size), mode="constant")
+            g = jnp.pad(g, ((0, 0), (0, pad_size)), mode="constant")
 
         num_batches = z.shape[0] // batch_size
         if pad_size > 0:
-            subkeys = jnp.pad(subkeys, ((0, pad_size), (0, 0)), mode='constant')
+            subkeys = jnp.pad(subkeys, ((0, pad_size), (0, 0)), mode="constant")
         subkeys_batched = subkeys.reshape((num_batches, batch_size, -1))
 
         z_batched = z.reshape((num_batches, batch_size, latent_dim, latent_dim))

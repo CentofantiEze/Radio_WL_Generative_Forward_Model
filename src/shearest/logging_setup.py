@@ -19,7 +19,6 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
-
 LOG_FILE_NAME = "radio_sampling.log"
 """Filename used inside ``out_dir`` for the run-level log."""
 

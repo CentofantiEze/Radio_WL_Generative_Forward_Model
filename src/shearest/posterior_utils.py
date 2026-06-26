@@ -84,16 +84,13 @@ def gmm_log_prob(gmm_params, points):
     log_components = np.zeros((M, K))
 
     for k in range(K):
-        log_components[:, k] = (
-            np.log(weights[k])
-            + multivariate_normal.logpdf(points, mean=means[k], cov=covariances[k])
+        log_components[:, k] = np.log(weights[k]) + multivariate_normal.logpdf(
+            points, mean=means[k], cov=covariances[k]
         )
 
     # logsumexp over components
     max_log = np.max(log_components, axis=1, keepdims=True)
-    log_prob = max_log[:, 0] + np.log(
-        np.sum(np.exp(log_components - max_log), axis=1)
-    )
+    log_prob = max_log[:, 0] + np.log(np.sum(np.exp(log_components - max_log), axis=1))
     return log_prob
 
 
@@ -357,7 +354,9 @@ def divide_gmm_by_gaussian(gmm_params, prior_mean, prior_cov):
         log_det_k = np.linalg.slogdet(covs[k])[1]
         log_det_p = np.linalg.slogdet(prior_cov)[1]
         log_weight_corrections[k] = 0.5 * (
-            log_det_new - log_det_k + log_det_p
+            log_det_new
+            - log_det_k
+            + log_det_p
             + mu_new @ prec_new @ mu_new
             - means[k] @ prec_k @ means[k]
             + prior_mean @ prior_prec @ prior_mean
@@ -379,8 +378,13 @@ def divide_gmm_by_gaussian(gmm_params, prior_mean, prior_cov):
     return {"weights": new_weights, "means": new_means, "covariances": new_covs}
 
 
-def combine_gmms(gmm_list, weight_threshold=1e-10, max_components=100,
-                 prior_mean=None, prior_cov=None):
+def combine_gmms(
+    gmm_list,
+    weight_threshold=1e-10,
+    max_components=100,
+    prior_mean=None,
+    prior_cov=None,
+):
     """Multiply a list of GMMs sequentially with pruning.
 
     When prior_mean and prior_cov are provided, divides out (N-1) copies
@@ -420,8 +424,7 @@ def combine_gmms(gmm_list, weight_threshold=1e-10, max_components=100,
         prior_mean = np.asarray(prior_mean)
         prior_cov = np.asarray(prior_cov)
         likelihood_list = [
-            divide_gmm_by_gaussian(gmm, prior_mean, prior_cov)
-            for gmm in gmm_list
+            divide_gmm_by_gaussian(gmm, prior_mean, prior_cov) for gmm in gmm_list
         ]
         # Multiply all likelihoods
         result = likelihood_list[0]
@@ -464,8 +467,15 @@ def combine_gmms(gmm_list, weight_threshold=1e-10, max_components=100,
     return result
 
 
-def plot_gmm_contours(gmm_params, ax=None, levels=(0.68, 0.95), n_grid=200,
-                      true_g=None, color="blue", label=None):
+def plot_gmm_contours(
+    gmm_params,
+    ax=None,
+    levels=(0.68, 0.95),
+    n_grid=200,
+    true_g=None,
+    color="blue",
+    label=None,
+):
     """Plot GMM density contours.
 
     Parameters
@@ -637,7 +647,9 @@ def coverage_table(credible_levels, nominal_levels=None):
     credible_levels = np.asarray(credible_levels)
     N = len(credible_levels)
 
-    empirical = np.array([np.mean(credible_levels <= level) for level in nominal_levels])
+    empirical = np.array(
+        [np.mean(credible_levels <= level) for level in nominal_levels]
+    )
     se = np.sqrt(empirical * (1 - empirical) / N)
 
     return {
