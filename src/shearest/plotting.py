@@ -79,9 +79,7 @@ def plot_data_grid(
     """
     uv_images = _build_uv_image_list(data, mask, uv_pos)
     if Ngal >= 100:
-        tiled = rearrange(
-            uv_images[:100], "(n1 n2) h w -> (n1 h) (n2 w)", n1=10, n2=10
-        )
+        tiled = rearrange(uv_images[:100], "(n1 n2) h w -> (n1 h) (n2 w)", n1=10, n2=10)
     else:
         side = int(np.ceil(np.sqrt(Ngal)))
         tiled = rearrange(
@@ -153,7 +151,10 @@ def plot_map_convergence(
     axes[0].set_yscale("log")
     if has_shear and args.n_steps_map_freeze_shear > 0:
         axes[0].axvline(
-            args.n_steps_map_freeze_shear, color="k", ls=":", alpha=0.5,
+            args.n_steps_map_freeze_shear,
+            color="k",
+            ls=":",
+            alpha=0.5,
             label="unfreeze g",
         )
     axes[0].set_xlabel("MAP step")
@@ -189,21 +190,29 @@ def plot_map_convergence(
 # --------------------------------------------------------------------------- #
 # 5. Initial guess / MAP shear vs truth (scatter)                             #
 # --------------------------------------------------------------------------- #
-def plot_initial_guess_shear(init_val_prior, init_val_map, args, out_dir: str | Path) -> None:
+def plot_initial_guess_shear(
+    init_val_prior, init_val_map, args, out_dir: str | Path
+) -> None:
     """Plot the prior-draw and MAP shear estimates in the (g1, g2) plane."""
     g_rescale = args.g_prior_scale / args.g_prior_sigma
     fig = plt.figure()
-    plt.scatter(init_val_prior["g1"] * g_rescale,
-                init_val_prior["g2"] * g_rescale,
-                label="Initial guess")
-    plt.scatter(init_val_map["g1"] * g_rescale,
-                init_val_map["g2"] * g_rescale,
-                label="MAP estimate")
+    plt.scatter(
+        init_val_prior["g1"] * g_rescale,
+        init_val_prior["g2"] * g_rescale,
+        label="Initial guess",
+    )
+    plt.scatter(
+        init_val_map["g1"] * g_rescale,
+        init_val_map["g2"] * g_rescale,
+        label="MAP estimate",
+    )
     plt.scatter(args.g1_true, args.g2_true, color="red", label="True shear")
-    plt.xlim(args.g1_true - 3 * args.g_prior_scale,
-             args.g1_true + 3 * args.g_prior_scale)
-    plt.ylim(args.g2_true - 3 * args.g_prior_scale,
-             args.g2_true + 3 * args.g_prior_scale)
+    plt.xlim(
+        args.g1_true - 3 * args.g_prior_scale, args.g1_true + 3 * args.g_prior_scale
+    )
+    plt.ylim(
+        args.g2_true - 3 * args.g_prior_scale, args.g2_true + 3 * args.g_prior_scale
+    )
     plt.xlabel("g1")
     plt.ylabel("g2")
     plt.title("Initial guess for the shear")
@@ -260,10 +269,13 @@ def plot_chains_raw(
 # --------------------------------------------------------------------------- #
 def _scale_e_pair(samples_: dict, k: int, label: str, args, names: tuple[str, str]):
     """Helper: scale (e1, e2) (or _disk / _bulge variant) to physical, project to unit disk."""
-    e = jnp.stack([
-        samples_[names[0]][k, :, 0] / args.ell_prior_sigma * args.ell_prior_scale,
-        samples_[names[1]][k, :, 0] / args.ell_prior_sigma * args.ell_prior_scale,
-    ], 0)
+    e = jnp.stack(
+        [
+            samples_[names[0]][k, :, 0] / args.ell_prior_sigma * args.ell_prior_scale,
+            samples_[names[1]][k, :, 0] / args.ell_prior_sigma * args.ell_prior_scale,
+        ],
+        0,
+    )
     e = to_unit_disk(e)
     return e[0] if label == names[0] else e[1]
 
@@ -283,40 +295,64 @@ def plot_chains_scaled(
             if label in ("hlr", "hlr_disk", "hlr_bulge") and label in samples_:
                 ax.plot(
                     jax.nn.sigmoid(samples_[label][k, :, 0] / args.hlr_prior_sigma)
-                    * (args.hlr_prior_max - args.hlr_prior_min) + args.hlr_prior_min,
-                    "k", alpha=0.3,
+                    * (args.hlr_prior_max - args.hlr_prior_min)
+                    + args.hlr_prior_min,
+                    "k",
+                    alpha=0.3,
                 )
             elif label == "flux":
                 ax.plot(
                     jax.nn.sigmoid(samples_["flux"][k, :, 0] / args.flux_prior_sigma)
-                    * (args.flux_prior_max - args.flux_prior_min) + args.flux_prior_min,
-                    "k", alpha=0.3,
+                    * (args.flux_prior_max - args.flux_prior_min)
+                    + args.flux_prior_min,
+                    "k",
+                    alpha=0.3,
                 )
             elif label == "flux_ratio":
                 ax.plot(
                     jax.nn.sigmoid(samples_["flux_ratio"][k, :, 0])
                     * args.composite_flux_ratio_max,
-                    "k", alpha=0.3,
+                    "k",
+                    alpha=0.3,
                 )
             elif label in ("e1", "e2") and "e1" in samples_ and "e2" in samples_:
-                ax.plot(_scale_e_pair(samples_, k, label, args, ("e1", "e2")),
-                        "k", alpha=0.3)
+                ax.plot(
+                    _scale_e_pair(samples_, k, label, args, ("e1", "e2")),
+                    "k",
+                    alpha=0.3,
+                )
             elif label in ("e1_disk", "e2_disk") and "e1_disk" in samples_:
-                ax.plot(_scale_e_pair(samples_, k, label, args, ("e1_disk", "e2_disk")),
-                        "k", alpha=0.3)
+                ax.plot(
+                    _scale_e_pair(samples_, k, label, args, ("e1_disk", "e2_disk")),
+                    "k",
+                    alpha=0.3,
+                )
             elif label in ("e1_bulge", "e2_bulge") and "e1_bulge" in samples_:
-                ax.plot(_scale_e_pair(samples_, k, label, args, ("e1_bulge", "e2_bulge")),
-                        "k", alpha=0.3)
+                ax.plot(
+                    _scale_e_pair(samples_, k, label, args, ("e1_bulge", "e2_bulge")),
+                    "k",
+                    alpha=0.3,
+                )
             elif label in ("g1", "g2") and "g1" in samples_ and "g2" in samples_:
-                g = jnp.stack([
-                    samples_["g1"][k, :, 0] / args.g_prior_sigma * args.g_prior_scale,
-                    samples_["g2"][k, :, 0] / args.g_prior_sigma * args.g_prior_scale,
-                ], 0)
+                g = jnp.stack(
+                    [
+                        samples_["g1"][k, :, 0]
+                        / args.g_prior_sigma
+                        * args.g_prior_scale,
+                        samples_["g2"][k, :, 0]
+                        / args.g_prior_sigma
+                        * args.g_prior_scale,
+                    ],
+                    0,
+                )
                 g = to_unit_disk(g)
                 ax.plot(g[0] if label == "g1" else g[1], "k", alpha=0.3)
             elif latent_key is not None and label == f"{latent_key}[0]":
-                ax.plot(samples_[latent_key][k, :, 0, 0, 0] / args.latent_sigma,
-                        "k", alpha=0.3)
+                ax.plot(
+                    samples_[latent_key][k, :, 0, 0, 0] / args.latent_sigma,
+                    "k",
+                    alpha=0.3,
+                )
             else:
                 ax.plot(samples_[label][k, :, 0], "k", alpha=0.3)
         ref_key = (
@@ -339,12 +375,13 @@ def plot_chains_scaled(
 def plot_corner_shear(samples_: dict, args, out_dir: str | Path) -> None:
     """Corner plot of (g1, g2) samples in physical units, with truths overlaid."""
     truths = np.array([args.g1_true, args.g2_true])
-    samples_g = np.concatenate([samples_["g1"], samples_["g2"]], -1).reshape((-1, 2)) * (
-        args.g_prior_scale / args.g_prior_sigma
-    )
+    samples_g = np.concatenate([samples_["g1"], samples_["g2"]], -1).reshape(
+        (-1, 2)
+    ) * (args.g_prior_scale / args.g_prior_sigma)
     fig = plt.figure(figsize=(7, 7))
-    fig = corner.corner(samples_g, truths=truths,
-                        labels=[r"$\gamma_1$", r"$\gamma_2$"], fig=fig)
+    fig = corner.corner(
+        samples_g, truths=truths, labels=[r"$\gamma_1$", r"$\gamma_2$"], fig=fig
+    )
     fig.savefig(os.path.join(out_dir, "radio_corner_g.png"))
     plt.close(fig)
 
@@ -357,7 +394,5 @@ def plot_gmm_posterior(gmm_params: dict, args, out_dir: str | Path) -> None:
     fig, ax = plt.subplots(1, 1, figsize=(6, 6))
     plot_gmm_contours(gmm_params, ax=ax, true_g=(args.g1_true, args.g2_true))
     ax.set_title("GMM Posterior Density")
-    fig.savefig(
-        os.path.join(out_dir, "gmm_contours.png"), dpi=150, bbox_inches="tight"
-    )
+    fig.savefig(os.path.join(out_dir, "gmm_contours.png"), dpi=150, bbox_inches="tight")
     plt.close(fig)

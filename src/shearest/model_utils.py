@@ -5,7 +5,7 @@ from typing import Any, Callable, Optional
 
 import jax
 import jax.numpy as jnp
-import jax_galsim as galsim # type: ignore
+import jax_galsim as galsim  # type: ignore
 import numpy as np
 import numpyro
 import numpyro.distributions as dist
@@ -671,7 +671,10 @@ def build_log_prob_fn(model, data):
         @jax.checkpoint
         def _log_density(params):
             return numpyro.infer.util.log_density(
-                seeded_model, (), {"obs": data}, params,
+                seeded_model,
+                (),
+                {"obs": data},
+                params,
             )[0]
 
         return _log_density(params)
