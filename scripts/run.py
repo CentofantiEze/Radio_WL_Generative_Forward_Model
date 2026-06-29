@@ -372,7 +372,6 @@ def main():
 
         # Print MAP diagnostics
         if has_shear:
-            logger.info(f"{init_val['g1'] * g_rescale} {init_val['g2'] * g_rescale}")
             logger.info(
                 f"Initial guess: g1={init_val['g1']*g_rescale}, g2={init_val['g2']*g_rescale}"
             )
@@ -594,8 +593,6 @@ def main():
 
     if has_shear:
         flatchain = np.std(samples_["g1"], axis=1) < 1e-4
-        logger.info("Flatchains:")
-        logger.info(flatchain)
         logger.info("Flatchains:")
         logger.info(flatchain)
 
