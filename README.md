@@ -1,6 +1,18 @@
-# Radio WL Generative Forward Model
+# Shear inference environment
+*Generative forward modelling for radio weak gravitational lensing*
+
+<p align="center">
+  <a href="https://www.python.org/"><img src="https://img.shields.io/badge/python-3.10%2B-blue?logo=python&logoColor=white" alt="Python 3.10+"></a>
+  <a href="https://github.com/jax-ml/jax"><img src="https://img.shields.io/badge/JAX-powered-9cf?logo=googlecloud&logoColor=white" alt="JAX-powered"></a>
+  <a href="https://opensource.org/licenses/MIT"><img src="https://img.shields.io/badge/License-MIT-yellow.svg" alt="License: MIT"></a>
+  <a href="#forthcoming-publication"><img src="https://img.shields.io/badge/arXiv-upcoming-b31b1b.svg" alt="arXiv: upcoming"></a>
+</p>
 
 Differentiable generative forward model and Bayesian shear inference pipeline for **radio weak lensing**. Built on JAX, [`jax-galsim`](https://github.com/GalSim-developers/JAX-GalSim), [`numpyro`](https://github.com/pyro-ppl/numpyro), and [`blackjax`](https://github.com/blackjax-devs/blackjax) (MCLMC sampler), with a normalising-flow-reparameterised autoencoder prior trained on COSMOS HST stamps.
+
+## Forthcoming publication
+
+A paper presenting this generative forward model and its application to COSMOS galaxies adapted to radio observations with SKA-Mid is in preparation. The preprint link, citation, and BibTeX entry will be added here once available.
 
 ## Overview
 
@@ -17,7 +29,9 @@ The AE encoder/decoder and the latent-space normalising flow live in the compani
 
 Shear posterior on 10000 AE-whitened COSMOS galaxies observed with SKA-Mid (8 h track, 1.4 GHz, σ_uv = 0.01):
 
-![Combined shear estimates: Flow+AE vs Spergel](outputs/papers/figs/cosmos_shear_estimates.png)
+<p align="center">
+  <img src="outputs/papers/figs/cosmos_shear_estimates.png" alt="Combined shear estimates: Flow+AE vs Spergel" width="500">
+</p>
 
 - **Spergel** (purple): 68 / 95 / 99.7 % credible regions of the shear posterior, using the parametric forward model. Recovers a tight but **biased** posterior (~10 σ away from the truth on both `γ₁` and `γ₂`) — the parametric prior is too restrictive to capture COSMOS morphologies, so the inferred shear is model biased.
 - **Flow + AE** (orange): 68 / 95 / 99.7 % credible regions of the shear posterior, using the generative forward model. Recovers a **correctly centred** posterior with slightly larger uncertainty than the Spergel case, but without the bias (within 2 σ).
@@ -46,6 +60,8 @@ notebooks/             # diagnostic / exploration notebooks
 outputs/
     papers/figs/       # paper-ready figures
     papers/jobs/       # bash scripts for paper runs
+    papers/notebooks/  # notebooks for paper figures
+
 data/
     SKA-Mid.txt        # SKA-Mid antenna positions
     trecs_gal_params.npy
