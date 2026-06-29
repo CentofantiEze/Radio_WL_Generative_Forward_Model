@@ -256,8 +256,10 @@ def main():
     has_shear = "g1" in init_val_prior
     g_rescale = args.g_prior_scale / args.g_prior_sigma
 
-    # Try to load precomputed MAP values
+    # Try to load precomputed MAP values. `map_loaded` carries the actual
+    # state (file present and read) rather than mutating ``args.precomputed_map``.
     map_file = os.path.join(out_dir, "radio_map_val.npy")
+    map_loaded = False
     if args.precomputed_map and os.path.exists(map_file):
         logger.info(f"Loading precomputed MAP from {map_file}")
         init_val_map = np.load(map_file, allow_pickle=True)[()]
@@ -267,13 +269,13 @@ def main():
             logger.info(
                 f"Loaded MAP: g1={init_val_map['g1']*g_rescale}, g2={init_val_map['g2']*g_rescale}"
             )
+        map_loaded = True
     elif args.precomputed_map:
         logger.warning(
-            f"WARNING: --precomputed_map set but {map_file} not found, running MAP"
+            f"--precomputed_map set but {map_file} not found, running MAP"
         )
-        args.precomputed_map = False
 
-    if not args.precomputed_map:
+    if not map_loaded:
 
         def find_map(init_params):
             param_labels = {
