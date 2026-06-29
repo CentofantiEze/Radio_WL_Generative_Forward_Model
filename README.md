@@ -41,9 +41,8 @@ The AE encoder/decoder and the latent-space normalising flow live in the compani
 
 Shear posterior on 10 000 AE-whitened COSMOS galaxies observed with SKA-Mid (8 h track, 1.4 GHz, $\sigma_{uv} = 0.01$):
 
-<p align="center">
-  <img src="outputs/papers/figs/cosmos_shear_estimates.png" alt="Combined shear estimates: Flow+AE vs Spergel" width="500">
-</p>
+<img src="outputs/papers/figs/cosmos_shear_estimates.png" alt="Combined shear estimates: Flow+AE vs Spergel" width="500">
+
 
 | Forward model          | Centre vs truth                                |
 | :--------------------- | :--------------------------------------------- |
