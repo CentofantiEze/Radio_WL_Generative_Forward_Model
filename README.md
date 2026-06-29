@@ -28,19 +28,24 @@ The AE+flow result is reproduced by `outputs/papers/notebooks/cosmos_shear_estim
 
 ```
 src/shearest/          # core library
-    model_utils.py     # numpyro model_fn{_VAE, _VAE_flow, _composite, …}
-    data_gen_utils.py  # draw_{exp,spergel,HST,AE_HST,NN}_profile  + gen_gal_dataset
-    psf_utils.py       # compute_radio_uv_mask via argosim
-    func_utils.py      # to_unit_disk, complex/stack helpers
+    cli.py             # parse and validate CLI args
+    logging_setup.py   # setup_logger (stdout + timestamped file handler)
+    model_utils.py     # numpyro forward models
+    data_gen_utils.py  # galaxy generative models
+    psf_utils.py       # compute radio PSF via argosim
+    sampling.py        # MCLMC setup and adaptation
+    plotting.py        # plotting utilities 
+    func_utils.py      # helper functions
     posterior_utils.py # GMM fitting and combination
 
 scripts/
-    shear_numpyro_sampling_argparse.py   # main entry point
+    run.py             # main entry point
 
 notebooks/             # diagnostic / exploration notebooks
+
 outputs/
     papers/figs/       # paper-ready figures
-    papers/            # paper-oriented analysis notebooks
+    papers/jobs/       # bash scripts for paper runs
 data/
     SKA-Mid.txt        # SKA-Mid antenna positions
     trecs_gal_params.npy
@@ -53,18 +58,22 @@ The pipeline requires the following packages: JAX, numpyro, blackjax, jax-galsim
 
 ## Usage
 
-The main entry point is `scripts/shear_numpyro_sampling_argparse.py`. All variants of the pipeline are configured via command-line arguments; convenience shell scripts wrap common configurations. You can find some example shell scripts with different configurations in `scripts/`.
+The main entry point is `scripts/run.py`. All variants of the pipeline are configured via command-line arguments (parsed by `src/shearest/cli.py::parse_args`, which also performs cross-argument validation); convenience shell scripts wrap common configurations. You can find some example shell scripts with different configurations in `outputs/papers/jobs`.
 
 ## Pipeline structure
 
-The main script follows this sequence:
+`scripts/run.py` follows this sequence:
 
-1. **PSF generation** (`compute_radio_uv_mask` in `psf_utils.py`) — antenna config (SKA-Mid file or random) → UV coverage mask → dirty PSF.
-2. **Data generation** (`gen_gal_dataset` in `data_gen_utils.py`) — draws galaxies (parametric Spergel, raw HST cutouts, or AE-whitened COSMOS via `draw_AE_HST_profiles`) → renders k-image → samples at `uv_pos` → adds Gaussian noise at `noise_data`.
-3. **MAP estimation** — Samplin initialisation. Adam optimisation on the joint negative log-posterior with multi-transform learning rates (`lr_map` for nuisance, `lr_map · lr_map_shear_factor` for `γ`). Multiple chains in parallel.
-4. **MCLMC adaptation** — direct call to `make_L_step_size_adaptation` + `make_adaptation_L` with gradient-aware initial `step_size` and diagonal mass-matrix preconditioning.
-5. **Sampling** — MCLMC is run using the `blackjax` implementation.
-6. **Posterior summarisation** — fit a 5-component GMM in `(γ₁, γ₂)`, save `radio_shear_gmm.npz`.
+1. **CLI parsing & logging** (`src/shearest/cli.py`, `src/shearest/logging_setup.py`) — parse and validate CLI args (`parse_args`), create the output directory, configure the package logger (stdout + a timestamped file handler under `out_dir/`).
+2. **PSF generation** (`compute_radio_uv_mask` in `psf_utils.py`) — antenna config (SKA-Mid file or random) → UV coverage mask → dirty PSF.
+3. **Data generation** (`gen_gal_dataset` in `data_gen_utils.py`) — draws galaxies (parametric Spergel, raw HST cutouts, or AE-whitened COSMOS via `draw_AE_HST_profiles`) → renders k-image → samples at `uv_pos` → adds Gaussian noise at `noise_data`.
+4. **Forward-model build** (`setup_vae_state` + `build_model` + `build_log_prob_fn` in `model_utils.py`) — loads the model AE and (optional) latent normalising flow, builds the numpyro model (`model_fn`, `model_fn_VAE`, `model_fn_VAE_flow`, `model_fn_composite`, …), and wraps the `seed → jit → checkpoint → log_density` pipeline into a single log-probability function for MCMC.
+5. **MAP estimation** — sampler initialisation. Adam or Adafactor (selected via `--map_optimizer`) on the joint negative log-posterior with multi-transform learning rates (`lr_map` for nuisance parameters, `lr_map · lr_map_shear_factor` for `γ`). Multiple chains in parallel. Result is cached as `radio_map_val.npy` and re-used on subsequent runs when `--precomputed_map` is set.
+6. **MCLMC adaptation** (`sampling.setup_mclmc` in `sampling.py`) — gradient-aware initial `step_size` and `L` from the MAP gradient, diagonal mass-matrix preconditioning, direct call to `make_L_step_size_adaptation` + `make_adaptation_L`, with automatic retries on collapse.
+7. **Float16 decoder cast** (`cast_ae_to_float16` in `model_utils.py`) — the VAE decoder is rebuilt in `float16` for the sampling loop (MAP and adaptation run in `float32` for stability); ~2× speedup on V100.
+8. **Sampling** — MCLMC run via the `blackjax` implementation, in two outer iterations of `num_chains × num_steps` per chain (`jax.lax.scan` inside, vmapped over chains).
+9. **Posterior summarisation** (`fit_gmm` / `save_gmm` in `posterior_utils.py`) — fit a 5-component GMM in `(γ₁, γ₂)`, save `radio_shear_gmm.npz`, and also save sample-level mean and standard deviation.
+10. **Plotting** (`plotting.py`) — when `--save_plots` is set: UV mask / PSF, data grid, MAP convergence, chain traces (raw and scaled), corner plot, GMM posterior overlay.
 
 The whole pipeline runs end-to-end in ~50 min on a V100 for 100 galaxies with the AE+flow model (`n_warmup=5000, num_chains=4, num_steps=500, num=5`), reaching ESS ≈ 200 on the shear parameters. The parametric Spergel model is faster (~10 min) since the galaxy generative model is much simpler.
 
