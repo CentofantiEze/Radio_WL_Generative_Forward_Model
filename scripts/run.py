@@ -203,17 +203,17 @@ def main():
         return {name: t[name]["value"] for name in t if name != "obs"}
 
     keys = jax.random.split(key, args.num_chains)[: args.num_chains]
-    init_val_ = jax.vmap(draw_params)(keys)
+    init_val_prior = jax.vmap(draw_params)(keys)
 
-    if args.g_chains_init is not None and "g1" in init_val_:
+    if args.g_chains_init is not None and "g1" in init_val_prior:
         g1_init, g2_init = args.g_chains_init
         # Convert from physical to MCMC space (inverse of g_rescale = g_prior_scale/g_prior_sigma)
         g1_mcmc = g1_init * args.g_prior_sigma / args.g_prior_scale
         g2_mcmc = g2_init * args.g_prior_sigma / args.g_prior_scale
-        init_val_ = {
-            **init_val_,
-            "g1": jnp.full_like(init_val_["g1"], g1_mcmc),
-            "g2": jnp.full_like(init_val_["g2"], g2_mcmc),
+        init_val_prior = {
+            **init_val_prior,
+            "g1": jnp.full_like(init_val_prior["g1"], g1_mcmc),
+            "g2": jnp.full_like(init_val_prior["g2"], g2_mcmc),
         }
         logger.info(
             f"g_chains_init: g1={g1_init}, g2={g2_init} (physical) -> g1={g1_mcmc:.4f}, g2={g2_mcmc:.4f} (MCMC space)"
@@ -222,13 +222,13 @@ def main():
     # Override the prior draw of u (flow base latent) with N(0, sigma^2). When
     # sigma=0, u collapses to zeros. Useful for testing how much of the MAP
     # outcome is driven by the initial u vs by the data.
-    if args.u_chains_init is not None and "u" in init_val_:
+    if args.u_chains_init is not None and "u" in init_val_prior:
         key, ukey = jax.random.split(key)
-        u_shape = init_val_["u"].shape
-        init_val_ = {
-            **init_val_,
+        u_shape = init_val_prior["u"].shape
+        init_val_prior = {
+            **init_val_prior,
             "u": args.u_chains_init
-            * jax.random.normal(ukey, u_shape, dtype=init_val_["u"].dtype),
+            * jax.random.normal(ukey, u_shape, dtype=init_val_prior["u"].dtype),
         }
         logger.info(
             f"u_chains_init: u ~ N(0, {args.u_chains_init}^2) (shape {u_shape})"
@@ -236,7 +236,7 @@ def main():
 
     if args.save_data:
         np.save(
-            os.path.join(out_dir, "radio_init_val.npy"), init_val_, allow_pickle=True
+            os.path.join(out_dir, "radio_init_val.npy"), init_val_prior, allow_pickle=True
         )
 
     # Build the (jitted, gradient-checkpointed) log density for the joint
@@ -250,23 +250,22 @@ def main():
     )
     logger.info(f"MAP number of steps: {args.n_steps_map}")
 
-    map_init_val = init_val_
     nll = lambda params: -log_prob_fn(params)
 
     # find the MAP for chain initialization
-    has_shear = "g1" in map_init_val
+    has_shear = "g1" in init_val_prior
     g_rescale = args.g_prior_scale / args.g_prior_sigma
 
     # Try to load precomputed MAP values
     map_file = os.path.join(out_dir, "radio_map_val.npy")
     if args.precomputed_map and os.path.exists(map_file):
         logger.info(f"Loading precomputed MAP from {map_file}")
-        init_val = np.load(map_file, allow_pickle=True)[()]
+        init_val_map = np.load(map_file, allow_pickle=True)[()]
         # Convert to jax arrays
-        init_val = {k: jnp.array(v) for k, v in init_val.items()}
+        init_val_map = {k: jnp.array(v) for k, v in init_val_map.items()}
         if has_shear:
             logger.info(
-                f"Loaded MAP: g1={init_val['g1']*g_rescale}, g2={init_val['g2']*g_rescale}"
+                f"Loaded MAP: g1={init_val_map['g1']*g_rescale}, g2={init_val_map['g2']*g_rescale}"
             )
     elif args.precomputed_map:
         logger.warning(
@@ -356,13 +355,13 @@ def main():
                 return params, losses
 
         t_map_start = datetime.now()
-        map_results = jax.vmap(find_map)(map_init_val)
+        map_results = jax.vmap(find_map)(init_val_prior)
         if has_shear:
-            init_val, map_losses, map_g1_trace, map_g2_trace = map_results
+            init_val_map, map_losses, map_g1_trace, map_g2_trace = map_results
             # Block until MAP is complete so the timing reflects actual GPU work
-            init_val["g1"].block_until_ready()
+            init_val_map["g1"].block_until_ready()
         else:
-            init_val, map_losses = map_results
+            init_val_map, map_losses = map_results
             map_losses.block_until_ready()
         t_map_end = datetime.now()
         map_elapsed = t_map_end - t_map_start
@@ -373,7 +372,7 @@ def main():
         # Print MAP diagnostics
         if has_shear:
             logger.info(
-                f"Initial guess: g1={init_val['g1']*g_rescale}, g2={init_val['g2']*g_rescale}"
+                f"Initial guess: g1={init_val_map['g1']*g_rescale}, g2={init_val_map['g2']*g_rescale}"
             )
         logger.info(f"MAP final loss (per chain): {map_losses[:, -1]}")
 
@@ -389,13 +388,13 @@ def main():
             )
         if args.save_data:
             np.save(
-                os.path.join(out_dir, "radio_map_val.npy"), init_val, allow_pickle=True
+                os.path.join(out_dir, "radio_map_val.npy"), init_val_map, allow_pickle=True
             )
 
     if args.point_estimate:
         if has_shear:
-            g1_estimates = init_val["g1"] * g_rescale
-            g2_estimates = init_val["g2"] * g_rescale
+            g1_estimates = init_val_map["g1"] * g_rescale
+            g2_estimates = init_val_map["g2"] * g_rescale
             np.save(
                 os.path.join(out_dir, "map_shear_estimates.npy"),
                 jnp.stack([g1_estimates, g2_estimates], axis=-1),
@@ -416,7 +415,7 @@ def main():
         sys.exit(0)
 
     if args.save_plots and has_shear:
-        plotting.plot_initial_guess_shear(init_val_, init_val, args, out_dir)
+        plotting.plot_initial_guess_shear(init_val_prior, init_val_map, args, out_dir)
 
     # Initialise sampling
 
@@ -428,8 +427,8 @@ def main():
         # save of the adapted mass matrix all live in :mod:`sampling`.
         parameters, key_init_chains = sampling.setup_mclmc(
             log_prob_fn,
-            init_val_map=init_val,
-            init_val_prior=init_val_,
+            init_val_map=init_val_map,
+            init_val_prior=init_val_prior,
             key_warmup=key_warmup,
             args=args,
             out_dir=out_dir,
@@ -457,7 +456,7 @@ def main():
         kernel = blackjax.mclmc(log_prob_fn, **parameters._asdict())
 
         # Initialize all chains with tuned kernel
-        last_states = jax.vmap(kernel.init)(init_val, key_init_chains)
+        last_states = jax.vmap(kernel.init)(init_val_map, key_init_chains)
 
     else:
         raise ValueError("Sampler not recognized. Use mclmc.")
