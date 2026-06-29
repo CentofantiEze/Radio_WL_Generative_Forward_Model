@@ -10,8 +10,6 @@ import numpy as np
 import numpyro
 import optax
 import equinox as eqx
-import blackjax.adaptation.mclmc_adaptation as mclmc_adj
-from jax.flatten_util import ravel_pytree
 from numpyro.handlers import seed, trace
 
 warnings.filterwarnings("ignore")
@@ -34,7 +32,7 @@ from src.shearest.model_utils import (
 )
 from src.shearest.psf_utils import compute_radio_uv_mask
 from src.shearest.posterior_utils import fit_gmm, save_gmm
-from src.shearest import plotting
+from src.shearest import plotting, sampling
 
 # Data-gen AE (needs encoder + decoder) — different checkpoint from the
 # model AE (which is handled inside setup_vae_state / cast_ae_to_float16).
@@ -421,227 +419,18 @@ def main():
     key_warmup, key_sample = jax.random.split(key)
 
     if args.sampler == "mclmc":
-        key_init, key_tune = jax.random.split(key_warmup)
-        key_init_chains = jax.random.split(key_init, args.num_chains)
-
-        # Compute dimensionality and gradient at MAP for initial step_size/L.
-        # Gradient-norm scaling (sqrt(dim)/grad_norm) keeps the leapfrog energy
-        # error in a safe regime: overshooting causes a NaN cascade that
-        # collapses step_size to 0 permanently. Undershooting just costs warmup.
-        first_chain_init = jax.tree.map(lambda x: x[0], init_val)
-        ndim = sum(v.size for v in jax.tree.leaves(first_chain_init))
-        DESIRED_ENERGY_VAR = 1e-3
-        grad_at_map = jax.grad(log_prob_fn)(first_chain_init)
-        grad_norm = jnp.linalg.norm(ravel_pytree(grad_at_map)[0])
-
-        # MAP convergence diagnostic: ‖∇‖ should drop by orders of magnitude
-        # between pre-MAP and post-MAP. If reduction is small, MAP didn't
-        # converge and the gradient-based step_size formula will underestimate.
-        first_chain_pre_map = jax.tree.map(lambda x: x[0], init_val_)
-        grad_pre_map_norm = jnp.linalg.norm(
-            ravel_pytree(jax.grad(log_prob_fn)(first_chain_pre_map))[0]
-        )
-        reduction = (
-            float(grad_pre_map_norm / grad_norm)
-            if float(grad_norm) > 0
-            else float("inf")
-        )
-        logger.info(
-            f"MAP gradient reduction: ‖∇‖ pre-MAP={float(grad_pre_map_norm):.3e}, "
-            f"post-MAP={float(grad_norm):.3e}, factor={reduction:.1f}x"
-        )
-
-        # Per-group ‖∇‖ at MAP — identifies which parameters did/didn't converge.
-        logger.info("Per-group ‖∇‖ at MAP:")
-        for k in sorted(grad_at_map.keys()):
-            g_flat = grad_at_map[k].ravel()
-            line = (
-                f"  {k:>12s}: ‖∇‖={float(jnp.linalg.norm(g_flat)):.3e}, "
-                f"max|∂|={float(jnp.max(jnp.abs(g_flat))):.3e}"
-            )
-            logger.info(line)
-
-        # Fallback: when grad_norm is enormous (un-converged MAP or stiff
-        # likelihood), the formula collapses step_size to ~0 and the EMA in
-        # phase 1 cannot recover within frac_tune1·n_warmup steps. Floor at
-        # args.lr_map so adaptation starts from a workable scale.
-        formula_step_size = (
-            float(jnp.sqrt(ndim) / grad_norm) * (DESIRED_ENERGY_VAR / 1e-2) ** 0.25
-        )
-        if formula_step_size < args.lr_map:
-            initial_step_size = args.lr_map
-            init_source = f"floor=lr_map ({args.lr_map:.3e}; formula gave {formula_step_size:.3e})"
-        else:
-            initial_step_size = formula_step_size
-            init_source = f"gradient formula ({formula_step_size:.3e})"
-        initial_L = float(jnp.sqrt(ndim)) * initial_step_size
-        logger.info(
-            f"MCLMC init: ndim={ndim}, grad_norm={float(grad_norm):.3e}, "
-            f"initial_step_size={initial_step_size:.3e}, initial_L={initial_L:.3e} "
-            f"[{init_source}]"
-        )
-
-        def mclmc_factory(inverse_mass_matrix):
-            return blackjax.mcmc.mclmc.build_kernel(
-                logdensity_fn=log_prob_fn,
-                inverse_mass_matrix=inverse_mass_matrix,
-                integrator=blackjax.mcmc.integrators.isokinetic_mclachlan,
-            )
-
-        # Build inverse mass matrix. JAX flattens parameter dicts in sorted key order,
-        # so we iterate sorted keys to match the flattened vector layout.
-        # Setting a smaller value for g1/g2 gives them finer effective steps,
-        # compensating for their much narrower posterior relative to latent dims.
-        if args.mclmc_inv_mass_file is not None:
-            inverse_mass_matrix = jnp.array(np.load(args.mclmc_inv_mass_file))
-            logger.info(
-                f"MCLMC inverse mass matrix loaded from {args.mclmc_inv_mass_file}"
-            )
-            logger.info(
-                f"  shape={inverse_mass_matrix.shape}, min={inverse_mass_matrix.min():.6f}, "
-                f"max={inverse_mass_matrix.max():.6f}, ratio={inverse_mass_matrix.max()/inverse_mass_matrix.min():.1f}"
-            )
-            logger.info(
-                f"MCLMC inverse mass matrix loaded from {args.mclmc_inv_mass_file}"
-            )
-        elif args.mclmc_inv_mass_shear is not None:
-            inv_mass_parts = []
-            for k in sorted(first_chain_init.keys()):
-                val = args.mclmc_inv_mass_shear if k in ("g1", "g2") else 1.0
-                inv_mass_parts.append(jnp.full(first_chain_init[k].size, val))
-            inverse_mass_matrix = jnp.concatenate(inv_mass_parts)
-            logger.info(
-                f"MCLMC diagonal inverse mass matrix: g1/g2={args.mclmc_inv_mass_shear}, others=1.0"
-            )
-        else:
-            inverse_mass_matrix = jnp.ones((ndim,))
-
-        temp_kernel = blackjax.mclmc(
+        # Initial step_size/L from MAP gradient, inverse-mass-matrix setup,
+        # phase 1+2 + phase 3 adaptation with retries, and the diagnostic
+        # save of the adapted mass matrix all live in :mod:`sampling`.
+        parameters, key_init_chains = sampling.setup_mclmc(
             log_prob_fn,
-            step_size=initial_step_size,
-            L=initial_L,
-            inverse_mass_matrix=inverse_mass_matrix,
+            init_val_map=init_val,
+            init_val_prior=init_val_,
+            key_warmup=key_warmup,
+            args=args,
+            out_dir=out_dir,
+            logger=logger,
         )
-
-        # Skip adaptation if both L and step_size are provided
-        first_chain_state = temp_kernel.init(first_chain_init, key_init_chains[0])
-
-        if args.mclmc_L is not None and args.step_size is not None:
-            logger.info(
-                f"Skipping MCLMC adaptation: using L={args.mclmc_L}, step_size={args.step_size}"
-            )
-            parameters = mclmc_adj.MCLMCAdaptationState(
-                L=jnp.array(args.mclmc_L),
-                step_size=jnp.array(args.step_size),
-                inverse_mass_matrix=jnp.array(inverse_mass_matrix),
-            )
-        else:
-            # Build phase-1+2 adaptation factory once. Calling
-            # make_L_step_size_adaptation directly (instead of the
-            # mclmc_find_L_and_step_size wrapper) lets us inject the
-            # gradient-aware initial L/step_size computed above. The wrapper
-            # would discard them and start at L=sqrt(dim), step_size=sqrt(dim)*0.25,
-            # which for stiff radio likelihoods triggers a NaN cascade and
-            # wastes phase-1 steps on step_size_max recovery.
-            frac_tune1, frac_tune2, frac_tune3 = 0.4, 0.4, 0.2
-            L_step_size_adapt = mclmc_adj.make_L_step_size_adaptation(
-                kernel=mclmc_factory,
-                dim=ndim,
-                frac_tune1=frac_tune1,
-                frac_tune2=frac_tune2,
-                desired_energy_var=1e-3,
-                trust_in_estimate=2.0,
-                num_effective_samples=50,
-                diagonal_preconditioning=True,
-            )
-
-            initial_params = mclmc_adj.MCLMCAdaptationState(
-                L=jnp.array(initial_L),
-                step_size=jnp.array(initial_step_size),
-                inverse_mass_matrix=jnp.array(inverse_mass_matrix),
-            )
-
-            max_adapt_attempts = 10
-            for adapt_attempt in range(1, max_adapt_attempts + 1):
-                logger.info(
-                    f"MCLMC adaptation attempt {adapt_attempt}/{max_adapt_attempts}..."
-                )
-                key_tune, key_retry = jax.random.split(key_tune)
-                key_phase12, key_phase3 = jax.random.split(key_retry)
-
-                # Phase 1+2: adapt step_size, L, and inverse_mass_matrix
-                adapted_state, parameters = L_step_size_adapt(
-                    first_chain_state, initial_params, args.n_warmup, key_phase12
-                )
-                logger.info(
-                    f"  After phase 1+2: L={float(parameters.L):.6f}, "
-                    f"step_size={float(parameters.step_size):.8f}"
-                )
-
-                # Phase 3: refine L via ESS — only if phase 1+2 didn't collapse.
-                # A collapsed phase 1+2 means L or step_size went to ~0 (dead chain),
-                # so phase 3 would just propagate the dead state.
-                chain_ok = (
-                    float(parameters.L) > 1e-10 and float(parameters.step_size) > 1e-10
-                )
-                if chain_ok and frac_tune3 > 0:
-                    adapted_kernel = mclmc_factory(parameters.inverse_mass_matrix)
-                    adapted_state, parameters = mclmc_adj.make_adaptation_L(
-                        adapted_kernel, frac=frac_tune3, Lfactor=0.4
-                    )(adapted_state, parameters, args.n_warmup, key_phase3)
-                    logger.info(
-                        f"  After phase 3:   L={float(parameters.L):.6f}, "
-                        f"step_size={float(parameters.step_size):.8f}"
-                    )
-                elif not chain_ok:
-                    logger.info(f"  Phase 1+2 collapsed; skipping phase 3")
-
-                if parameters.step_size > 0 and parameters.L > 0:
-                    break
-                logger.info(
-                    f"Adaptation failed (step_size={parameters.step_size}, L={parameters.L}), retrying..."
-                )
-
-            if parameters.step_size <= 0 or parameters.L <= 0:
-                msg = (
-                    f"MCLMC adaptation failed after {max_adapt_attempts} attempts: "
-                    f"step_size={parameters.step_size}, L={parameters.L}"
-                )
-                logger.info(msg)
-                t_end = datetime.now()
-                logger.info(
-                    f"End: {t_end.strftime('%Y-%m-%d %H:%M:%S')} (elapsed: {t_end - t_start})"
-                )
-                raise RuntimeError(msg)
-
-            logger.info(f"Step size: {parameters.step_size}")
-            logger.info(f"Step size: {parameters.step_size}")
-            logger.info(f"L: {parameters.L}")
-            logger.info(f"L: {parameters.L}")
-            inv_mass = parameters.inverse_mass_matrix
-            if hasattr(inv_mass, "shape") and inv_mass.ndim > 0:
-                logger.info(
-                    f"Inverse mass matrix: min={inv_mass.min():.6f}, max={inv_mass.max():.6f}, "
-                    f"median={jnp.median(inv_mass):.6f}, ratio={inv_mass.max()/inv_mass.min():.1f}"
-                )
-                # Print per-parameter group and save full vector
-                offset = 0
-                for k in sorted(first_chain_init.keys()):
-                    size = first_chain_init[k].size
-                    chunk = inv_mass[offset : offset + size]
-                    logger.info(
-                        f"  {k:>6s} [{size:4d}]: min={chunk.min():.6f}, max={chunk.max():.6f}, median={jnp.median(chunk):.6f}"
-                    )
-                    offset += size
-                np.save(
-                    os.path.join(out_dir, "mclmc_inv_mass_matrix.npy"),
-                    np.array(inv_mass),
-                )
-                logger.info(
-                    f"Saved inverse mass matrix to {out_dir}/mclmc_inv_mass_matrix.npy"
-                )
-            else:
-                logger.info(f"Inverse mass matrix: scalar = {inv_mass}")
 
         # Cast the decoder to float16 for sampling (after adaptation in float32)
         # and rebuild the model + log-density on top of the f16 decoder.
