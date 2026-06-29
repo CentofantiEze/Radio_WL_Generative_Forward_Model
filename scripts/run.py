@@ -6,13 +6,11 @@ from pathlib import Path
 import blackjax
 import jax
 import jax.numpy as jnp
-import matplotlib.pyplot as plt
 import numpy as np
 import numpyro
 import optax
 import equinox as eqx
 import blackjax.adaptation.mclmc_adaptation as mclmc_adj
-from einops import rearrange
 from jax.flatten_util import ravel_pytree
 from numpyro.handlers import seed, trace
 
@@ -27,12 +25,9 @@ import jax_galsim as galsim  # type: ignore
 # Add project root to sys.path
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-import corner
-
 from src.shearest.cli import parse_args
 from src.shearest.logging_setup import setup_logger
 from src.shearest.data_gen_utils import gen_gal_dataset
-from src.shearest.func_utils import stack_2_complex, to_unit_disk
 from src.shearest.model_utils import (
     model_fn,
     model_fn_VAE,
@@ -40,7 +35,8 @@ from src.shearest.model_utils import (
     model_fn_composite,
 )
 from src.shearest.psf_utils import compute_radio_uv_mask
-from src.shearest.posterior_utils import fit_gmm, save_gmm, plot_gmm_contours
+from src.shearest.posterior_utils import fit_gmm, save_gmm
+from src.shearest import plotting
 
 from pshear.utils import load_galaxy_autoencoder  # type: ignore
 from pshear.utils import load_flow  # type: ignore
@@ -101,17 +97,7 @@ def main():
     )
 
     if args.save_plots:
-        # Plot radio UV mask and PSF
-        plt.subplots(1, 2, figsize=(8, 4))
-        plt.subplot(121)
-        plt.imshow(np.real(mask))
-        plt.title("UV mask")
-        plt.colorbar()
-        plt.subplot(122)
-        plt.imshow(psf)
-        plt.title("Radio PSF")
-        plt.colorbar()
-        plt.savefig(os.path.join(out_dir, "radio_psf.png"))
+        plotting.plot_uv_mask_psf(mask, psf, out_dir)
 
     # Init seed
     if args.seed is None:
@@ -313,48 +299,8 @@ def main():
     # seeded_model = seed(model, subkey)
 
     if args.save_plots:
-        # Plot 100 observations
-        data_complex = []
-        for vis in stack_2_complex(data, batch=True):
-            img_aux = np.zeros_like(mask)
-            img_aux[uv_pos] = vis
-            data_complex.append(img_aux)
-        if args.Ngal >= 100:
-            data_ = rearrange(
-                data_complex[:100], "(n1 n2) h w -> (n1 h) (n2 w)", n1=10, n2=10
-            )
-        else:
-            n1 = int(np.ceil(np.sqrt(args.Ngal)))
-            n2 = int(np.ceil(np.sqrt(args.Ngal)))
-            data_ = rearrange(
-                data_complex[: int(n1 * n2)],
-                "(n1 n2) h w -> (n1 h) (n2 w)",
-                n1=n1,
-                n2=n2,
-            )
-        plt.figure(figsize=(10, 10))
-        plt.imshow(
-            np.abs(data_), vmin=np.min(np.abs(data_)), vmax=np.max(np.abs(data_))
-        )
-        logger.info(f'Data shape: {data_.shape}')
-        logger.info(f'Data max: {np.max(np.abs(data_))}')
-        logger.info(f"Data max: {np.max(np.abs(data_))}")
-        plt.colorbar()
-        plt.savefig(os.path.join(out_dir, "radio_data.png"))
-
-        # Plot a random galaxy
-        plt.subplots(1, 2, figsize=(12, 4))
-        plt.subplot(121)
-        idx = np.random.randint(0, args.Ngal)
-        plt.imshow(np.abs(data_complex[idx]))
-        plt.title(f"Observed galaxy {idx} uv")
-        plt.colorbar()
-        plt.subplot(122)
-        plt.imshow(np.abs(np.fft.ifftshift(np.fft.ifft2(data_complex[idx]))))
-        plt.title(f"Observed galaxy {idx} image")
-        plt.colorbar()
-        plt.tight_layout()
-        plt.savefig(os.path.join(out_dir, "radio_data_galaxy.png"))
+        uv_images = plotting.plot_data_grid(data, mask, uv_pos, args.Ngal, out_dir)
+        plotting.plot_random_galaxy(uv_images, args.Ngal, out_dir)
 
     # Sample parameters from their prior
     def draw_params(key):
@@ -539,71 +485,15 @@ def main():
         logger.info(f"MAP final loss (per chain): {map_losses[:, -1]}")
 
         if args.save_plots:
-            # Plot MAP convergence: loss and g1,g2 evolution
-            n_map_plots = 3 if has_shear else 1
-            fig, axes = plt.subplots(1, n_map_plots, figsize=(5 * n_map_plots, 4))
-            if n_map_plots == 1:
-                axes = [axes]
-            total_map_steps = (
-                args.n_steps_map_freeze_shear if has_shear else 0
-            ) + args.n_steps_map
-            steps = jnp.arange(total_map_steps)
-
-            # Loss (log scale, shift to ensure positive values)
-            loss_min = jnp.min(map_losses)
-            loss_offset = jnp.where(loss_min < 0, jnp.abs(loss_min) + 1.0, 0.0)
-            for c in range(map_losses.shape[0]):
-                axes[0].plot(
-                    steps, map_losses[c] + loss_offset, alpha=0.7, label=f"chain {c}"
-                )
-            axes[0].set_yscale("log")
-            if has_shear and args.n_steps_map_freeze_shear > 0:
-                axes[0].axvline(
-                    args.n_steps_map_freeze_shear,
-                    color="k",
-                    ls=":",
-                    alpha=0.5,
-                    label="unfreeze g",
-                )
-            axes[0].set_xlabel("MAP step")
-            ylabel = (
-                "Loss (NLL)" if loss_offset == 0 else f"Loss (NLL + {loss_offset:.1f})"
+            plotting.plot_map_convergence(
+                map_losses,
+                map_g1_trace if has_shear else None,
+                map_g2_trace if has_shear else None,
+                args,
+                has_shear=has_shear,
+                g_rescale=g_rescale,
+                out_dir=out_dir,
             )
-            axes[0].set_ylabel(ylabel)
-            axes[0].set_title("MAP loss")
-            axes[0].legend(fontsize=7)
-
-            if has_shear:
-                # g1 trace per chain: shape (n_chains, total_map_steps, 1) -> squeeze last dim
-                map_g1_phys = (
-                    map_g1_trace.squeeze(-1) * g_rescale
-                )  # (n_chains, total_steps)
-                map_g2_phys = map_g2_trace.squeeze(-1) * g_rescale
-
-                for c in range(map_g1_phys.shape[0]):
-                    axes[1].plot(steps, map_g1_phys[c], alpha=0.7, label=f"chain {c}")
-                    axes[2].plot(steps, map_g2_phys[c], alpha=0.7, label=f"chain {c}")
-                axes[1].axhline(args.g1_true, color="r", ls="--", lw=1, label="true")
-                axes[2].axhline(args.g2_true, color="r", ls="--", lw=1, label="true")
-                if args.n_steps_map_freeze_shear > 0:
-                    axes[1].axvline(
-                        args.n_steps_map_freeze_shear, color="k", ls=":", alpha=0.5
-                    )
-                    axes[2].axvline(
-                        args.n_steps_map_freeze_shear, color="k", ls=":", alpha=0.5
-                    )
-                axes[1].set_xlabel("MAP step")
-                axes[1].set_ylabel("g1")
-                axes[1].set_title("g1 MAP trace")
-                axes[1].legend(fontsize=7)
-                axes[2].set_xlabel("MAP step")
-                axes[2].set_ylabel("g2")
-                axes[2].set_title("g2 MAP trace")
-                axes[2].legend(fontsize=7)
-
-            fig.tight_layout()
-            fig.savefig(os.path.join(out_dir, "map_convergence.png"), dpi=150)
-            plt.close(fig)
         if args.save_data:
             np.save(
                 os.path.join(out_dir, "radio_map_val.npy"), init_val, allow_pickle=True
@@ -629,31 +519,7 @@ def main():
         sys.exit(0)
 
     if args.save_plots and has_shear:
-        # Plot the initial guess for the shear
-        plt.figure()
-        plt.scatter(
-            init_val_["g1"] * (args.g_prior_scale / args.g_prior_sigma),
-            init_val_["g2"] * (args.g_prior_scale / args.g_prior_sigma),
-            label="Initial guess",
-        )
-        plt.scatter(
-            init_val["g1"] * (args.g_prior_scale / args.g_prior_sigma),
-            init_val["g2"] * (args.g_prior_scale / args.g_prior_sigma),
-            label="MAP estimate",
-        )
-        plt.scatter(args.g1_true, args.g2_true, color="red", label="True shear")
-        plt.xlim(
-            args.g1_true - 3 * args.g_prior_scale, args.g1_true + 3 * args.g_prior_scale
-        )
-        plt.ylim(
-            args.g2_true - 3 * args.g_prior_scale, args.g2_true + 3 * args.g_prior_scale
-        )
-        plt.xlabel("g1")
-        plt.ylabel("g2")
-        plt.title("Initial guess for the shear")
-        plt.legend()
-        # plt.show()
-        plt.savefig(os.path.join(out_dir, "radio_initial_guess.png"))
+        plotting.plot_initial_guess_shear(init_val_, init_val, args, out_dir)
 
     # Initialise sampling
 
@@ -1040,156 +906,12 @@ def main():
         labels.append(f"{latent_key}[0]")
 
     if args.save_plots:
-        fig, axes = plt.subplots(
-            max(len(labels), 1), figsize=(10, 2.5 * max(len(labels), 1)), sharex=True
+        plotting.plot_chains_raw(
+            samples_, labels, latent_key, args.num_chains, args.plot_chains, out_dir,
         )
-        if len(labels) == 1:
-            axes = [axes]
-        for i, label in enumerate(labels):
-            ax = axes[i]
-            for k in range(args.num_chains):
-                if latent_key is not None and label == f"{latent_key}[0]":
-                    ax.plot(samples_[latent_key][k, :, 0, 0, 0], "k", alpha=0.3)
-                else:
-                    ax.plot(samples_[label][k, :, 0], "k", alpha=0.3)
-            ref_key = (
-                latent_key
-                if (latent_key is not None and label == f"{latent_key}[0]")
-                else label
-            )
-            ax.set_xlim(0, samples_[ref_key].shape[1])
-            ax.set_ylabel(label)
-            ax.yaxis.set_label_coords(-0.1, 0.5)
-        axes[-1].set_xlabel("step number")
-        if args.plot_chains in ["samples", "both"]:
-            plt.savefig(os.path.join(out_dir, "radio_chains.png"))
-        plt.close()
-
-        # Scaled chains plot
-        fig, axes = plt.subplots(
-            max(len(labels), 1), figsize=(10, 2.5 * max(len(labels), 1)), sharex=True
-        )
-        if len(labels) == 1:
-            axes = [axes]
-        for i, label in enumerate(labels):
-            ax = axes[i]
-            for k in range(args.num_chains):
-                if label in ("hlr", "hlr_disk", "hlr_bulge") and label in samples_:
-                    ax.plot(
-                        jax.nn.sigmoid(samples_[label][k, :, 0] / args.hlr_prior_sigma)
-                        * (args.hlr_prior_max - args.hlr_prior_min)
-                        + args.hlr_prior_min,
-                        "k",
-                        alpha=0.3,
-                    )
-                elif label == "flux":
-                    ax.plot(
-                        jax.nn.sigmoid(
-                            samples_["flux"][k, :, 0] / args.flux_prior_sigma
-                        )
-                        * (args.flux_prior_max - args.flux_prior_min)
-                        + args.flux_prior_min,
-                        "k",
-                        alpha=0.3,
-                    )
-                elif label == "flux_ratio":
-                    ax.plot(
-                        jax.nn.sigmoid(samples_["flux_ratio"][k, :, 0])
-                        * args.composite_flux_ratio_max,
-                        "k",
-                        alpha=0.3,
-                    )
-                elif label in ["e1", "e2"] and "e1" in samples_ and "e2" in samples_:
-                    e = jnp.stack(
-                        [
-                            samples_["e1"][k, :, 0]
-                            / args.ell_prior_sigma
-                            * args.ell_prior_scale,
-                            samples_["e2"][k, :, 0]
-                            / args.ell_prior_sigma
-                            * args.ell_prior_scale,
-                        ],
-                        0,
-                    )
-                    e = to_unit_disk(e)
-                    ax.plot(e[0] if label == "e1" else e[1], "k", alpha=0.3)
-                elif label in ["e1_disk", "e2_disk"] and "e1_disk" in samples_:
-                    e = jnp.stack(
-                        [
-                            samples_["e1_disk"][k, :, 0]
-                            / args.ell_prior_sigma
-                            * args.ell_prior_scale,
-                            samples_["e2_disk"][k, :, 0]
-                            / args.ell_prior_sigma
-                            * args.ell_prior_scale,
-                        ],
-                        0,
-                    )
-                    e = to_unit_disk(e)
-                    ax.plot(e[0] if label == "e1_disk" else e[1], "k", alpha=0.3)
-                elif label in ["e1_bulge", "e2_bulge"] and "e1_bulge" in samples_:
-                    e = jnp.stack(
-                        [
-                            samples_["e1_bulge"][k, :, 0]
-                            / args.ell_prior_sigma
-                            * args.ell_prior_scale,
-                            samples_["e2_bulge"][k, :, 0]
-                            / args.ell_prior_sigma
-                            * args.ell_prior_scale,
-                        ],
-                        0,
-                    )
-                    e = to_unit_disk(e)
-                    ax.plot(e[0] if label == "e1_bulge" else e[1], "k", alpha=0.3)
-                elif label in ["g1", "g2"] and "g1" in samples_ and "g2" in samples_:
-                    g = jnp.stack(
-                        [
-                            samples_["g1"][k, :, 0]
-                            / args.g_prior_sigma
-                            * args.g_prior_scale,
-                            samples_["g2"][k, :, 0]
-                            / args.g_prior_sigma
-                            * args.g_prior_scale,
-                        ],
-                        0,
-                    )
-                    g = to_unit_disk(g)
-                    ax.plot(g[0] if label == "g1" else g[1], "k", alpha=0.3)
-                elif latent_key is not None and label == f"{latent_key}[0]":
-                    ax.plot(
-                        samples_[latent_key][k, :, 0, 0, 0] / args.latent_sigma,
-                        "k",
-                        alpha=0.3,
-                    )
-                else:
-                    ax.plot(samples_[label][k, :, 0], "k", alpha=0.3)
-            ref_key = (
-                latent_key
-                if (latent_key is not None and label == f"{latent_key}[0]")
-                else label
-            )
-            ax.set_xlim(0, samples_[ref_key].shape[1])
-            ax.set_ylabel(label)
-            ax.yaxis.set_label_coords(-0.1, 0.5)
-        axes[-1].set_xlabel("step number")
-        if args.plot_chains in ["scaled", "both"]:
-            plt.savefig(os.path.join(out_dir, "radio_chains_scaled.png"))
-        plt.close()
-
+        plotting.plot_chains_scaled(samples_, labels, latent_key, args, out_dir)
         if has_shear:
-            two_truths = np.array([args.g1_true, args.g2_true])
-            samples_g = np.concatenate([samples_["g1"], samples_["g2"]], -1).reshape(
-                (-1, 2)
-            ) * (args.g_prior_scale / args.g_prior_sigma)
-
-            two_labels = [r"$\gamma_1$", r"$\gamma_2$"]
-
-            fig = plt.figure(figsize=(7, 7))
-            fig = corner.corner(
-                samples_g, truths=two_truths, labels=two_labels, fig=fig
-            )
-            fig.savefig(os.path.join(out_dir, "radio_corner_g.png"))
-            plt.close()
+            plotting.plot_corner_shear(samples_, args, out_dir)
 
     # Final ESS for all parameters
     logger.info("ESS at the end of second loop")
@@ -1241,17 +963,7 @@ def main():
         )
 
         if args.save_plots:
-            fig, ax = plt.subplots(1, 1, figsize=(6, 6))
-            plot_gmm_contours(
-                gmm_params,
-                ax=ax,
-                true_g=(args.g1_true, args.g2_true),
-            )
-            ax.set_title("GMM Posterior Density")
-            fig.savefig(
-                os.path.join(out_dir, "gmm_contours.png"), dpi=150, bbox_inches="tight"
-            )
-            plt.close(fig)
+            plotting.plot_gmm_posterior(gmm_params, args, out_dir)
 
     # Save samples
     if args.save_samples:
