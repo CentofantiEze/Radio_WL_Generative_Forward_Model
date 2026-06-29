@@ -98,9 +98,12 @@ def main():
     if args.save_plots:
         plotting.plot_uv_mask_psf(mask, psf, out_dir)
 
-    # Init seed
+    # Init seed. Use ``np.random.default_rng()`` (modern numpy RNG, seeded
+    # from OS entropy via SeedSequence) rather than the legacy global state
+    # ``np.random.randint`` so we don't depend on whether some other library
+    # has touched the global RNG before us.
     if args.seed is None:
-        args.seed = np.random.randint(1, 1e6)
+        args.seed = int(np.random.default_rng().integers(1, 1_000_000))
     logger.info(f"Random seed: {args.seed}")
     key = jax.random.PRNGKey(args.seed)
 
@@ -192,10 +195,12 @@ def main():
         uv_images = plotting.plot_data_grid(data, mask, uv_pos, args.Ngal, out_dir)
         plotting.plot_random_galaxy(uv_images, args.Ngal, out_dir)
 
-    # Sample parameters from their prior
+    # Sample parameters from their prior.
+    # ``name`` is the trace-key (parameter name, e.g. "g1", "u", "flux");
+    # kept distinct from ``key`` (the PRNG key) to avoid the previous shadowing.
     def draw_params(key):
         t = trace(seed(model, key)).get_trace()
-        return {key: t[key]["value"] for key in t if not key == "obs"}
+        return {name: t[name]["value"] for name in t if name != "obs"}
 
     keys = jax.random.split(key, args.num_chains)[: args.num_chains]
     init_val_ = jax.vmap(draw_params)(keys)
