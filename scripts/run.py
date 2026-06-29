@@ -20,8 +20,6 @@ import json
 import os
 import sys
 
-import jax_galsim as galsim  # type: ignore
-
 # Add project root to sys.path
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
@@ -29,17 +27,18 @@ from src.shearest.cli import parse_args
 from src.shearest.logging_setup import setup_logger
 from src.shearest.data_gen_utils import gen_gal_dataset
 from src.shearest.model_utils import (
-    model_fn,
-    model_fn_VAE,
-    model_fn_VAE_flow,
-    model_fn_composite,
+    setup_vae_state,
+    cast_ae_to_float16,
+    build_model,
+    build_log_prob_fn,
 )
 from src.shearest.psf_utils import compute_radio_uv_mask
 from src.shearest.posterior_utils import fit_gmm, save_gmm
 from src.shearest import plotting
 
+# Data-gen AE (needs encoder + decoder) — different checkpoint from the
+# model AE (which is handled inside setup_vae_state / cast_ae_to_float16).
 from pshear.utils import load_galaxy_autoencoder  # type: ignore
-from pshear.utils import load_flow  # type: ignore
 import yaml
 
 
@@ -169,134 +168,23 @@ def main():
     key, subkey = jax.random.split(key)
 
     # Init model for sampling
+    # Load the model AE + flow (no-op when profile is not VAE) and build the
+    # numpyro forward-model partial. The AE starts in float32 for MAP stability;
+    # it is cast to float16 later, after MCLMC adaptation.
+    ae = jitted_decode = gsparams = flow_forward = flow_condition = None
     if args.model_profile == "VAE":
-        # load autoencoder
-        VAE_PATH = Path(args.vae_path)
-        ae = load_galaxy_autoencoder(VAE_PATH, epoch=args.vae_epoch)
-        # Start in float32 for MAP stability; convert to float16 for MCMC later
-        jitted_decode = eqx.filter_jit(lambda z, key: ae.decode(z, key=key))
-        #
-        gsparams = galsim.GSParams(
-            minimum_fft_size=128,
-            folding_threshold=5e-3,
-            maxk_threshold=1e-3,
+        ae, jitted_decode, gsparams, flow_forward, flow_condition = setup_vae_state(
+            args, logger
         )
-        # Load normalizing flow if requested
-        flow_forward = None
-        flow_condition = None
-        if args.use_flow:
-            # Presence of flow_path and flow_epoch is guaranteed by cli._validate.
-            flow = load_flow(Path(args.flow_path), epoch=args.flow_epoch)
-            # The flow's base_dist may have learned loc/scale parameters during
-            # training, so we must apply base_dist.bijection (Affine) before the
-            # main bijection to match what flow.sample() does internally.
-            base_bij = flow.flow.base_dist.bijection
-            if flow.cond_dim > 0:
-                flow_forward = eqx.filter_jit(
-                    lambda u, c: flow.flow.bijection.transform(base_bij.transform(u), c)
-                )
-                flow_condition = jnp.array(args.flow_condition)
-            else:
-                flow_forward = eqx.filter_jit(
-                    lambda u: flow.flow.bijection.transform(base_bij.transform(u))
-                )
-                flow_condition = None
-            logger.info(f"Loaded flow from {args.flow_path} epoch {args.flow_epoch}")
-            logger.info(f"Flow condition: {flow_condition}")
-            logger.info(f"Loaded flow from {args.flow_path} epoch {args.flow_epoch}")
-            logger.info(f"Flow condition: {flow_condition}")
-
-        # Initialize the forward model
-        if args.use_flow:
-            model = partial(
-                model_fn_VAE_flow,
-                Ngal=args.Ngal,
-                Npx=args.Npx,
-                pixel_scale_vae=args.pixel_scale_vae,
-                uv_pos=uv_pos,
-                noise_uv=args.noise_uv,
-                obs=data,
-                g_sigma=args.g_prior_sigma,
-                g_scale=args.g_prior_scale,
-                flux_sigma=args.flux_prior_sigma,
-                flux_max=args.flux_prior_max,
-                flux_min=args.flux_prior_min,
-                latent_dim=args.latent_dim,
-                latent_sigma=args.latent_sigma,
-                jitted_decode=jitted_decode,
-                gsparams=gsparams,
-                run_type=args.vae_model_inference_mode,
-                batch_size=args.vae_inference_batch_size,
-                use_dropout=args.use_dropout,
-                flow_forward=flow_forward,
-                flow_condition=flow_condition,
-            )
-        else:
-            model = partial(
-                model_fn_VAE,
-                Ngal=args.Ngal,
-                Npx=args.Npx,
-                pixel_scale_vae=args.pixel_scale_vae,
-                uv_pos=uv_pos,
-                noise_uv=args.noise_uv,
-                obs=data,
-                g_sigma=args.g_prior_sigma,
-                g_scale=args.g_prior_scale,
-                flux_sigma=args.flux_prior_sigma,
-                flux_max=args.flux_prior_max,
-                flux_min=args.flux_prior_min,
-                latent_dim=args.latent_dim,
-                latent_mean=args.latent_mean,
-                latent_sigma=args.latent_sigma,
-                jitted_decode=jitted_decode,
-                gsparams=gsparams,
-                run_type=args.vae_model_inference_mode,
-                batch_size=args.vae_inference_batch_size,
-                use_dropout=args.use_dropout,
-            )
-    elif args.model_profile == "composite":
-        model = partial(
-            model_fn_composite,
-            Ngal=args.Ngal,
-            Npx=args.Npx,
-            pixel_scale=args.pixel_scale,
-            uv_pos=uv_pos,
-            noise_uv=args.noise_uv,
-            obs=data,
-            ell_sigma=args.ell_prior_sigma,
-            ell_scale=args.ell_prior_scale,
-            g_sigma=args.g_prior_sigma,
-            g_scale=args.g_prior_scale,
-            hlr_sigma=args.hlr_prior_sigma,
-            hlr_max=args.hlr_prior_max,
-            hlr_min=args.hlr_prior_min,
-            flux_sigma=args.flux_prior_sigma,
-            flux_max=args.flux_prior_max,
-            flux_min=args.flux_prior_min,
-            flux_ratio_max=args.composite_flux_ratio_max,
-        )
-    else:
-        model = partial(
-            model_fn,
-            Ngal=args.Ngal,
-            Npx=args.Npx,
-            pixel_scale=args.pixel_scale,
-            uv_pos=uv_pos,
-            noise_uv=args.noise_uv,
-            obs=data,
-            ell_sigma=args.ell_prior_sigma,
-            ell_scale=args.ell_prior_scale,
-            g_sigma=args.g_prior_sigma,
-            g_scale=args.g_prior_scale,
-            hlr_sigma=args.hlr_prior_sigma,
-            hlr_max=args.hlr_prior_max,
-            hlr_min=args.hlr_prior_min,
-            flux_sigma=args.flux_prior_sigma,
-            flux_max=args.flux_prior_max,
-            flux_min=args.flux_prior_min,
-            profile_type=args.model_profile,
-        )
-    # seeded_model = seed(model, subkey)
+    model = build_model(
+        args,
+        data=data,
+        uv_pos=uv_pos,
+        jitted_decode=jitted_decode,
+        gsparams=gsparams,
+        flow_forward=flow_forward,
+        flow_condition=flow_condition,
+    )
 
     if args.save_plots:
         uv_images = plotting.plot_data_grid(data, mask, uv_pos, args.Ngal, out_dir)
@@ -340,26 +228,11 @@ def main():
             os.path.join(out_dir, "radio_init_val.npy"), init_val_, allow_pickle=True
         )
 
-    # Get the log prob of the joint distribution, conditioned on data.
-    # Seed the model with a fixed key so the log density is deterministic
-    # (required for gradient-based MCMC). This provides the PRNG context
-    # needed by numpyro.prng_key() inside model_fn_VAE.
-    seeded_model = seed(model, jax.random.PRNGKey(0))
-
-    @jax.jit
-    def log_prob_fn(params):
-        @jax.checkpoint
-        def _log_density(params):
-            return numpyro.infer.util.log_density(
-                seeded_model,
-                (),
-                {
-                    "obs": data,
-                },
-                params,
-            )[0]
-
-        return _log_density(params)
+    # Build the (jitted, gradient-checkpointed) log density for the joint
+    # distribution conditioned on `data`. The model is seeded with a fixed
+    # key inside build_log_prob_fn so the density is deterministic — required
+    # for gradient-based MCMC.
+    log_prob_fn = build_log_prob_fn(model, data)
 
     logger.info(f"MAP optimizer: {args.map_optimizer}, lr: {args.lr_map} (shear factor: {args.lr_map_shear_factor}x)")
     logger.info(f"MAP number of steps: {args.n_steps_map}")
@@ -718,81 +591,20 @@ def main():
             else:
                 logger.info(f"Inverse mass matrix: scalar = {inv_mass}")
 
-        # Convert VAE to float16 for sampling (after adaptation in float32)
+        # Cast the decoder to float16 for sampling (after adaptation in float32)
+        # and rebuild the model + log-density on top of the f16 decoder.
         if args.model_profile == "VAE" and args.vae_precision == "float16":
-            ae = jax.tree.map(
-                lambda x: (
-                    x.astype(jnp.float16)
-                    if isinstance(x, jnp.ndarray)
-                    and jnp.issubdtype(x.dtype, jnp.floating)
-                    else x
-                ),
-                ae,
+            ae, jitted_decode = cast_ae_to_float16(ae)
+            model = build_model(
+                args,
+                data=data,
+                uv_pos=uv_pos,
+                jitted_decode=jitted_decode,
+                gsparams=gsparams,
+                flow_forward=flow_forward,
+                flow_condition=flow_condition,
             )
-            jitted_decode = eqx.filter_jit(
-                lambda z, key: ae.decode(z.astype(jnp.float16), key=key)
-            )
-            if args.use_flow:
-                model = partial(
-                    model_fn_VAE_flow,
-                    Ngal=args.Ngal,
-                    Npx=args.Npx,
-                    pixel_scale_vae=args.pixel_scale_vae,
-                    uv_pos=uv_pos,
-                    noise_uv=args.noise_uv,
-                    obs=data,
-                    g_sigma=args.g_prior_sigma,
-                    g_scale=args.g_prior_scale,
-                    flux_sigma=args.flux_prior_sigma,
-                    flux_max=args.flux_prior_max,
-                    flux_min=args.flux_prior_min,
-                    latent_dim=args.latent_dim,
-                    latent_sigma=args.latent_sigma,
-                    jitted_decode=jitted_decode,
-                    gsparams=gsparams,
-                    run_type=args.vae_model_inference_mode,
-                    batch_size=args.vae_inference_batch_size,
-                    use_dropout=args.use_dropout,
-                    flow_forward=flow_forward,
-                    flow_condition=flow_condition,
-                )
-            else:
-                model = partial(
-                    model_fn_VAE,
-                    Ngal=args.Ngal,
-                    Npx=args.Npx,
-                    pixel_scale_vae=args.pixel_scale_vae,
-                    uv_pos=uv_pos,
-                    noise_uv=args.noise_uv,
-                    obs=data,
-                    g_sigma=args.g_prior_sigma,
-                    g_scale=args.g_prior_scale,
-                    flux_sigma=args.flux_prior_sigma,
-                    flux_max=args.flux_prior_max,
-                    flux_min=args.flux_prior_min,
-                    latent_dim=args.latent_dim,
-                    latent_mean=args.latent_mean,
-                    latent_sigma=args.latent_sigma,
-                    jitted_decode=jitted_decode,
-                    gsparams=gsparams,
-                    run_type=args.vae_model_inference_mode,
-                    batch_size=args.vae_inference_batch_size,
-                    use_dropout=args.use_dropout,
-                )
-            seeded_model = seed(model, jax.random.PRNGKey(0))
-
-            @jax.jit
-            def log_prob_fn(params):
-                @jax.checkpoint
-                def _log_density(params):
-                    return numpyro.infer.util.log_density(
-                        seeded_model,
-                        (),
-                        {"obs": data},
-                        params,
-                    )[0]
-
-                return _log_density(params)
+            log_prob_fn = build_log_prob_fn(model, data)
 
             logger.info("VAE decoder converted to float16 for sampling")
 
