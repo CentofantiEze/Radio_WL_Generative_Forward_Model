@@ -1,7 +1,7 @@
 #!/bin/bash
 #SBATCH --mail-user=ezequiel.centofanti@cea.fr
 #SBATCH --mail-type=NONE
-#SBATCH --job-name=coverage_test_0
+#SBATCH --job-name=coverage_testing
 #SBATCH --ntasks=1
 #SBATCH --ntasks-per-node=1
 #SBATCH --gres=gpu:1
@@ -26,6 +26,7 @@
 #   Batch 2: N_BASE=10000, --array=0-9999   -> cov_100 to cov_199
 #   Batch 3: N_BASE=20000, --array=0-9999   -> cov_200 to cov_299
 #   ...
+#   Batch 10: N_BASE=90000, --array=0-9999   -> cov_900 to cov_999
 
 N_BASE=0
 N_COV=100
@@ -47,30 +48,26 @@ set -x
 
 cd ${WORK}/repos/Radio_WL_Generative_Forward_Model/scripts
 
-OUTPUT_DIR=${WORK}/repos/Radio_WL_Generative_Forward_Model/outputs/coverage_test/cov_${COVERAGE_ID}
+OUTPUT_DIR=${WORK}/repos/Radio_WL_Generative_Forward_Model/outputs/paper/coverage/cov_${COVERAGE_ID}
 
 args=(
     --Ngal 100
     --Npx 128
     --pixel_scale 0.15
-    --noise_uv 0.004
+    --noise_uv 0.02
     --trecs_data_path ../data/trecs_gal_params.npy
     --data_profile spergel
     --g1_true -0.05
     --g2_true 0.05
     --ell_scale 0.2
-
-    --antenna_type random
-    --n_antenna 15
-    --E_lim 40e3
-    --N_lim 40e3
+    --antenna_type file
+    --antenna_file ../data/SKA-Mid.txt
     --track_time 8
     --n_times 96
     --t0 -4
     --f 1.4e9
     --df 1e8
     --n_freqs 1
-    --radio_array_seed 123
     --model_profile spergel
     --ell_prior_sigma 1.0
     --ell_prior_scale 0.2
@@ -83,9 +80,9 @@ args=(
     --flux_prior_min 0.03
     --flux_prior_max 0.25
     --lr_map 3e-3
-    --n_steps_map 2500
+    --n_steps_map 7000
     --sampler mclmc
-    --n_warmup 50000
+    --n_warmup 70000
     --num_chains 10
     --num 20
     --num_steps 500
@@ -93,4 +90,4 @@ args=(
     --output_dir ${OUTPUT_DIR}
 )
 
-srun python -u shear_numpyro_sampling_argparse.py "${args[@]}"
+srun python -u run.py "${args[@]}"
